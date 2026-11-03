@@ -19,6 +19,7 @@ REGISTER_OK = {
 }
 FULL_ARGS = ["auth", "register", "--username", "Ana", "--email", "ana@example.com"]
 PASSWORDS = "secret1\nsecret1\n"
+CUSTOM_API_URL = "http://api.example.com"
 
 
 def run_register(runner: CliRunner, *extra: str, input: str = PASSWORDS + "y\n") -> Result:
@@ -27,6 +28,12 @@ def run_register(runner: CliRunner, *extra: str, input: str = PASSWORDS + "y\n")
 
 def sent_body(route: respx.Route) -> object:
     return json.loads(route.calls.last.request.content)
+
+
+def configure_api_url(url: str) -> None:
+    config = default_config_path()
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(f'api_url = "{url}"\n', encoding="utf-8")
 
 
 def write_session(token: str) -> Path:
@@ -68,10 +75,8 @@ def test_auth_without_subcommand_shows_help(runner: CliRunner) -> None:
 def test_register_sends_request_to_configured_api(
     runner: CliRunner, respx_mock: respx.MockRouter
 ) -> None:
-    config = default_config_path()
-    config.parent.mkdir(parents=True)
-    config.write_text('api_url = "http://api.example.com"\n', encoding="utf-8")
-    route = respx_mock.post("http://api.example.com/users").respond(201, json=REGISTER_OK)
+    configure_api_url(CUSTOM_API_URL)
+    route = respx_mock.post(f"{CUSTOM_API_URL}/users").respond(201, json=REGISTER_OK)
 
     result = run_register(runner, "--accept-terms", input=PASSWORDS)
 
@@ -167,12 +172,13 @@ def test_register_success_output(runner: CliRunner, respx_mock: respx.MockRouter
 def test_register_saves_session(
     runner: CliRunner, respx_mock: respx.MockRouter, isolated_env: Path
 ) -> None:
-    respx_mock.post(USERS_URL).respond(201, json=REGISTER_OK)
+    configure_api_url(CUSTOM_API_URL)
+    respx_mock.post(f"{CUSTOM_API_URL}/users").respond(201, json=REGISTER_OK)
     result = run_register(runner)
     assert result.exit_code == 0
     content = default_session_path().read_text(encoding="utf-8")
     assert json.loads(content) == {
-        "api_url": DEFAULT_API_URL,
+        "api_url": CUSTOM_API_URL,
         "access_token": "tok-123",
         "user": {"id": 2, "username": "Ana", "email": "ana@example.com"},
     }
