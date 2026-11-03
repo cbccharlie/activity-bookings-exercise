@@ -125,6 +125,47 @@ uv run activity-bookings activities list --status published              # solo 
   las expone.
 - Si no hay resultados, muestra `No activities found.` y termina con código 0.
 
+### Gestión de mis actividades
+
+```bash
+uv run activity-bookings activities create --name Yoga --price 20 --date 2027-01-15 \
+    --location Park --min-participants 2 --max-participants 10 [--duration 90]
+uv run activity-bookings activities update activity-5 --price 25 --max-participants 12
+uv run activity-bookings activities delete activity-5          # pide confirmación [y/N]
+uv run activity-bookings activities delete activity-5 --yes    # sin confirmación (también -y)
+```
+
+- `create`: `--name`, `--price`, `--date`, `--location`, `--min-participants` y
+  `--max-participants` son obligatorias; `--duration` (minutos) es opcional y la API usa 60 si no
+  se indica. La actividad se crea en estado `draft` y a nombre del usuario de la sesión. Muestra
+  la actividad creada.
+- `update ACTIVITY_ID`: acepta las mismas opciones, todas opcionales, y envía solo las indicadas.
+  Hay que indicar al menos una. Muestra la actividad actualizada. El estado no se puede cambiar
+  con este comando.
+- `delete ACTIVITY_ID`: pide confirmación (por defecto «no»); `--yes` / `-y` se la salta. Si no
+  se confirma, muestra `Deletion cancelled.` y termina con código 0.
+- `--date` acepta `YYYY-MM-DD` o ISO 8601 con hora; si lleva hora, indica también la zona
+  (p. ej. `2027-01-15T10:00:00Z`), porque si no el servidor la interpreta en su zona horaria. La
+  API exige que sea futura.
+- Las reglas (fecha futura, precio positivo, mínimo ≤ máximo, ser el dueño de la actividad) las
+  comprueba el servidor; la CLI muestra su mensaje y los campos con error, y termina con código 1.
+- Los tres comandos necesitan sesión (`auth register` o `auth login`) y envían su token. Fallan
+  sin llamar a la API, sugiriendo `auth login`, si no hay sesión, si el fichero de sesión no es
+  válido, si la sesión es de otra URL de API distinta de la configurada o si el token ya ha
+  caducado. Si el servidor rechaza el token (401), se muestra su mensaje y la misma sugerencia; el
+  fichero de sesión no se borra.
+
+> **Fallos conocidos del servidor** (puntos 1 y 7 de «Discrepancias y dudas» en
+> `docs/api-reference.md`):
+>
+> - (1a) Como `auth login` probablemente falle con los usuarios de ejemplo, lo normal es trabajar
+>   con la sesión de `auth register`. Ese usuario no es dueño de las actividades de ejemplo, así
+>   que modificarlas o borrarlas dará `You can only update/delete your own activities`.
+> - (1b) El contador de IDs del servidor empieza en 1, así que un `activities create` podría
+>   sobrescribir `activity-1` u otra actividad existente.
+> - (7) El servidor no impide borrar una actividad con reservas. Después, `GET /bookings` y
+>   `GET /bookings/:id` de esas reservas probablemente respondan con un error 500.
+
 ### Configuración
 
 La URL de la API se lee de `$XDG_CONFIG_HOME/activity-bookings/config.toml`

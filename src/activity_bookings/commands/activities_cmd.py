@@ -1,4 +1,4 @@
-"""`activities` command group: browse the public activity catalogue."""
+"""`activities` command group: browse the catalogue and manage your own activities."""
 
 from datetime import UTC, date, datetime
 from enum import StrEnum
@@ -8,12 +8,20 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from activity_bookings.api_client import Activity, ApiClient
+from activity_bookings.api_client import Activity, ActivityChanges, ApiClient, NewActivity
+from activity_bookings.commands._auth import authorized_client, login_hint
 from activity_bookings.config import load_settings
 from activity_bookings.console import console
 from activity_bookings.errors import handle_errors
 
-app = typer.Typer(help="Browse the activity catalogue.", no_args_is_help=True)
+app = typer.Typer(
+    help="Browse the activity catalogue and manage your own activities.", no_args_is_help=True
+)
+
+DATE_HELP = (
+    "Date as YYYY-MM-DD or ISO 8601 with time and zone (e.g. 2027-01-15T10:00:00Z); "
+    "must be in the future."
+)
 
 
 class SortField(StrEnum):
@@ -86,6 +94,121 @@ def list_activities(
     console.print(_activities_table(activities), markup=False, highlight=False)
     count = len(activities)
     console.print(f"{count} {'activity' if count == 1 else 'activities'}", highlight=False)
+
+
+@app.command("create")
+@handle_errors
+def create_activity(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Option("--name", help="Activity name.")],
+    price: Annotated[float, typer.Option("--price", help="Price per participant.")],
+    date: Annotated[str, typer.Option("--date", help=DATE_HELP)],
+    location: Annotated[str, typer.Option("--location", help="Where it takes place.")],
+    min_participants: Annotated[
+        int, typer.Option("--min-participants", help="Minimum number of participants.")
+    ],
+    max_participants: Annotated[
+        int, typer.Option("--max-participants", help="Maximum number of participants.")
+    ],
+    duration: Annotated[
+        int | None,
+        typer.Option("--duration", help="Duration in minutes (the API uses 60 if omitted)."),
+    ] = None,
+) -> None:
+    """Create an activity owned by you. It starts as a draft. Requires a session."""
+    new_activity = NewActivity(
+        name=name,
+        price=price,
+        date=date,
+        location=location,
+        min_participants=min_participants,
+        max_participants=max_participants,
+        duration=duration,
+    )
+    config_path: Path | None = ctx.obj
+    settings = load_settings(config_path)
+    with authorized_client(settings) as client, login_hint():
+        created = client.create_activity(new_activity)
+    _print_activity(created, "created")
+
+
+@app.command("update")
+@handle_errors
+def update_activity(
+    ctx: typer.Context,
+    activity_id: Annotated[
+        str, typer.Argument(metavar="ACTIVITY_ID", help="ID of the activity to change.")
+    ],
+    name: Annotated[str | None, typer.Option("--name", help="New name.")] = None,
+    price: Annotated[float | None, typer.Option("--price", help="New price.")] = None,
+    date: Annotated[str | None, typer.Option("--date", help=DATE_HELP)] = None,
+    location: Annotated[str | None, typer.Option("--location", help="New location.")] = None,
+    min_participants: Annotated[
+        int | None, typer.Option("--min-participants", help="New minimum of participants.")
+    ] = None,
+    max_participants: Annotated[
+        int | None, typer.Option("--max-participants", help="New maximum of participants.")
+    ] = None,
+    duration: Annotated[
+        int | None, typer.Option("--duration", help="New duration in minutes.")
+    ] = None,
+) -> None:
+    """Change one or more fields of one of your activities. Requires a session."""
+    changes = ActivityChanges(
+        name=name,
+        price=price,
+        date=date,
+        location=location,
+        min_participants=min_participants,
+        max_participants=max_participants,
+        duration=duration,
+    )
+    if changes.is_empty():
+        raise typer.BadParameter("at least one field to update is required", param_hint="options")
+    config_path: Path | None = ctx.obj
+    settings = load_settings(config_path)
+    with authorized_client(settings) as client, login_hint():
+        updated = client.update_activity(activity_id, changes)
+    _print_activity(updated, "updated")
+
+
+@app.command("delete")
+@handle_errors
+def delete_activity(
+    ctx: typer.Context,
+    activity_id: Annotated[
+        str, typer.Argument(metavar="ACTIVITY_ID", help="ID of the activity to delete.")
+    ],
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Delete without asking for confirmation.")
+    ] = False,
+) -> None:
+    """Delete one of your activities after confirmation. Requires a session."""
+    config_path: Path | None = ctx.obj
+    settings = load_settings(config_path)
+    with authorized_client(settings) as client:
+        if not yes and not typer.confirm(f"Delete activity {activity_id}?", default=False):
+            console.print("Deletion cancelled.", markup=False, highlight=False)
+            return
+        with login_hint():
+            client.delete_activity(activity_id)
+    console.print(f"Activity {activity_id} deleted.", markup=False, highlight=False)
+
+
+def _print_activity(activity: Activity, done: str) -> None:
+    """Print `Activity <id> <done>.` and the activity as a table without header."""
+    console.print(f"Activity {activity.id} {done}.", markup=False, highlight=False)
+    table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    table.add_column(style="bold", no_wrap=True)
+    table.add_column(overflow="fold")
+    table.add_row("ID", activity.id)
+    table.add_row("Name", activity.name)
+    table.add_row("Date", _format_date(activity.date))
+    table.add_row("Location", activity.location)
+    table.add_row("Price", _format_price(activity.price))
+    table.add_row("Capacity", str(activity.max_participants))
+    table.add_row("Status", activity.status)
+    console.print(table, markup=False, highlight=False)
 
 
 def _activities_table(activities: list[Activity]) -> Table:

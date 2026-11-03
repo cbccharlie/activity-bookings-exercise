@@ -1,8 +1,9 @@
 """HTTP client for the ActivityBookings API: requests, response models and error translation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from types import TracebackType
 from typing import Any, Self
+from urllib.parse import quote
 
 import httpx
 
@@ -108,6 +109,61 @@ def parse_activity(data: object, position: int | None = None) -> Activity:
     )
 
 
+_JSON_KEYS = {"min_participants": "minParticipants", "max_participants": "maxParticipants"}
+
+
+@dataclass(frozen=True)
+class NewActivity:
+    """Data for `POST /activities`. `duration` (minutes) is sent only if given."""
+
+    name: str
+    price: float
+    date: str
+    location: str
+    min_participants: int
+    max_participants: int
+    duration: int | None = None
+
+    def to_json(self) -> dict[str, object]:
+        """Return the request body; there is no `status`, so the API default applies."""
+        return _activity_body(self)
+
+
+@dataclass(frozen=True)
+class ActivityChanges:
+    """Fields to change with `PUT /activities/:id`; `None` means unchanged."""
+
+    name: str | None = None
+    price: float | None = None
+    date: str | None = None
+    location: str | None = None
+    min_participants: int | None = None
+    max_participants: int | None = None
+    duration: int | None = None
+
+    def to_json(self) -> dict[str, object]:
+        """Return the request body with only the fields that change."""
+        return _activity_body(self)
+
+    def is_empty(self) -> bool:
+        """Return True if no field changes."""
+        return not self.to_json()
+
+
+def _activity_body(data: NewActivity | ActivityChanges) -> dict[str, object]:
+    """Serialise the non-None fields of `data` with the API's camelCase keys."""
+    body: dict[str, object] = {}
+    for field in fields(data):
+        value = getattr(data, field.name)
+        if value is not None:
+            body[_JSON_KEYS.get(field.name, field.name)] = value
+    return body
+
+
+def _activity_path(activity_id: str) -> str:
+    return f"/activities/{quote(activity_id, safe='')}"
+
+
 def _require_str(data: dict[str, Any], key: str, label: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value:
@@ -118,9 +174,13 @@ def _require_str(data: dict[str, Any], key: str, label: str) -> str:
 class ApiClient:
     """Synchronous client for the ActivityBookings API. Use it as a context manager."""
 
-    def __init__(self, base_url: str, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self, base_url: str, timeout: float = DEFAULT_TIMEOUT, token: str | None = None
+    ) -> None:
+        """Create the client; with `token`, every request carries `Authorization: Bearer`."""
         self.base_url = base_url
-        self._http = httpx.Client(base_url=base_url, timeout=timeout)
+        headers = {} if token is None else {"Authorization": f"Bearer {token}"}
+        self._http = httpx.Client(base_url=base_url, timeout=timeout, headers=headers)
 
     def __enter__(self) -> Self:
         return self
@@ -165,14 +225,31 @@ class ApiClient:
             raise ApiResponseError("invalid response from the API: expected a list of activities")
         return [parse_activity(item, position) for position, item in enumerate(data, start=1)]
 
+    def create_activity(self, activity: NewActivity) -> Activity:
+        """Create an activity with `POST /activities` (requires a token) and return it."""
+        return parse_activity(self._request("POST", "/activities", json=activity.to_json()))
+
+    def update_activity(self, activity_id: str, changes: ActivityChanges) -> Activity:
+        """Change an activity with `PUT /activities/<id>` (requires a token) and return it."""
+        data = self._request("PUT", _activity_path(activity_id), json=changes.to_json())
+        return parse_activity(data)
+
+    def delete_activity(self, activity_id: str) -> None:
+        """Delete an activity with `DELETE /activities/<id>` (requires a token)."""
+        self._request("DELETE", _activity_path(activity_id), expect_body=False)
+
     def _request(
         self,
         method: str,
         path: str,
         json: object = None,
         params: dict[str, str] | None = None,
+        expect_body: bool = True,
     ) -> object:
-        """Send a request and return the decoded JSON body, translating every failure."""
+        """Send a request and return the decoded JSON body, translating every failure.
+
+        With `expect_body=False` the body of a successful response is ignored (e.g. 204).
+        """
         try:
             response = self._http.request(method, path, json=json, params=params)
         except httpx.ConnectError as exc:
@@ -184,6 +261,8 @@ class ApiClient:
 
         if response.is_error:
             raise _api_error(response)
+        if not expect_body:
+            return None
         try:
             return response.json()
         except ValueError as exc:

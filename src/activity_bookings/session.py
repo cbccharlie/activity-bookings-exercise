@@ -122,6 +122,36 @@ def token_expiry(token: str) -> datetime | None:
         return None
 
 
+def require_session(api_url: str) -> Session:
+    """Return the saved session for `api_url`, for commands that call protected routes.
+
+    Raises SessionError, without any HTTP request, if there is no session, the file is invalid,
+    it belongs to another API or its token has expired according to its `exp` claim. A token
+    whose expiry cannot be read is accepted: the server decides.
+    """
+    session = load_session()
+    if session is None:
+        raise SessionError(
+            "not logged in; run 'activity-bookings auth login' or 'activity-bookings auth register'"
+        )
+    if session.api_url.rstrip("/") != api_url.rstrip("/"):
+        raise SessionError(
+            f"the session belongs to {session.api_url}, but the configured API is {api_url}; "
+            "run 'activity-bookings auth login'"
+        )
+    expiry = token_expiry(session.access_token)
+    if expiry is not None and expiry <= _now():
+        raise SessionError(
+            f"your session expired on {expiry.strftime('%Y-%m-%d %H:%M')} UTC; "
+            "run 'activity-bookings auth login'"
+        )
+    return session
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 def _from_json(data: object, target: Path) -> Session:
     if not isinstance(data, dict):
         raise _invalid_session(target, "not a JSON object")

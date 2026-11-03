@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 import httpx
@@ -6,8 +7,10 @@ import respx
 
 from activity_bookings.api_client import (
     Activity,
+    ActivityChanges,
     ApiClient,
     AuthResult,
+    NewActivity,
     User,
     parse_activity,
     parse_auth_result,
@@ -365,3 +368,223 @@ def test_list_activities_server_error(respx_mock: respx.MockRouter) -> None:
         client.list_activities()
     assert str(exc.value) == "API error 500: Failed to retrieve activities"
     assert exc.value.status_code == 500
+
+
+# --- authorization header ------------------------------------------------------------
+
+
+def test_request_with_token_sends_bearer_header(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(ACTIVITIES_URL).respond(200, json=[])
+    with ApiClient(BASE_URL, token="tok-123") as client:
+        client.list_activities()
+    assert route.calls.last.request.headers["Authorization"] == "Bearer tok-123"
+
+
+def test_request_without_token_sends_no_header(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(ACTIVITIES_URL).respond(200, json=[])
+    with ApiClient(BASE_URL) as client:
+        client.list_activities()
+    assert "Authorization" not in route.calls.last.request.headers
+
+
+# --- request bodies ------------------------------------------------------------------
+
+NEW_YOGA = NewActivity(
+    name="Yoga",
+    price=20.0,
+    date="2027-01-15",
+    location="Park",
+    min_participants=2,
+    max_participants=10,
+)
+YOGA_BODY = {
+    "name": "Yoga",
+    "price": 20,
+    "date": "2027-01-15",
+    "location": "Park",
+    "minParticipants": 2,
+    "maxParticipants": 10,
+}
+
+
+def test_new_activity_body_without_duration() -> None:
+    assert NEW_YOGA.to_json() == YOGA_BODY
+
+
+def test_new_activity_body_with_duration() -> None:
+    activity = dataclasses.replace(NEW_YOGA, duration=90)
+    assert activity.to_json() == {**YOGA_BODY, "duration": 90}
+
+
+def test_activity_changes_body_only_given_fields() -> None:
+    changes = ActivityChanges(price=25.0, max_participants=12)
+    assert changes.to_json() == {"price": 25, "maxParticipants": 12}
+    assert not changes.is_empty()
+
+
+def test_activity_changes_all_fields_camel_case() -> None:
+    changes = ActivityChanges(
+        name="A",
+        price=1.5,
+        date="d",
+        location="L",
+        min_participants=1,
+        max_participants=2,
+        duration=30,
+    )
+    assert changes.to_json() == {
+        "name": "A",
+        "price": 1.5,
+        "date": "d",
+        "location": "L",
+        "minParticipants": 1,
+        "maxParticipants": 2,
+        "duration": 30,
+    }
+
+
+def test_activity_changes_empty() -> None:
+    assert ActivityChanges().is_empty()
+    assert ActivityChanges().to_json() == {}
+
+
+def test_bodies_never_contain_status() -> None:
+    assert "status" not in NEW_YOGA.to_json()
+    assert "status" not in ActivityChanges(name="x").to_json()
+
+
+# --- create_activity -----------------------------------------------------------------
+
+YOGA_JSON = {
+    **ACTIVITY_JSON,
+    "id": "activity-5",
+    "name": "Yoga",
+    "slug": "yoga",
+    "date": "2027-01-15",
+    "location": "Park",
+    "price": 20,
+    "minParticipants": 2,
+    "maxParticipants": 10,
+    "status": "draft",
+}
+YOGA = Activity(
+    id="activity-5",
+    name="Yoga",
+    date="2027-01-15",
+    location="Park",
+    price=20.0,
+    max_participants=10,
+    status="draft",
+)
+
+
+def test_create_activity(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.post(ACTIVITIES_URL).respond(201, json=YOGA_JSON)
+    with ApiClient(BASE_URL, token="tok-123") as client:
+        assert client.create_activity(NEW_YOGA) == YOGA
+    request = route.calls.last.request
+    assert request.headers["Authorization"] == "Bearer tok-123"
+    assert json.loads(request.content) == YOGA_BODY
+
+
+def test_create_activity_validation_error(respx_mock: respx.MockRouter) -> None:
+    respx_mock.post(ACTIVITIES_URL).respond(
+        400,
+        json={
+            "message": "Validation failed",
+            "errors": [{"field": "price", "message": "Price must be greater than 0"}],
+        },
+    )
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.create_activity(NEW_YOGA)
+    assert exc.value.status_code == 400
+    assert exc.value.field_errors == (FieldError("price", "Price must be greater than 0"),)
+
+
+def test_create_activity_unauthorized(respx_mock: respx.MockRouter) -> None:
+    respx_mock.post(ACTIVITIES_URL).respond(
+        401, json={"message": "Invalid or expired token. Please login again.", "errors": []}
+    )
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.create_activity(NEW_YOGA)
+    assert exc.value.status_code == 401
+    assert str(exc.value) == "Invalid or expired token. Please login again."
+
+
+def test_create_activity_incomplete_response(respx_mock: respx.MockRouter) -> None:
+    respx_mock.post(ACTIVITIES_URL).respond(201, json={"message": "ok"})
+    with (
+        ApiClient(BASE_URL, token="t") as client,
+        pytest.raises(ApiResponseError, match=r"^invalid response from the API"),
+    ):
+        client.create_activity(NEW_YOGA)
+
+
+# --- update_activity -----------------------------------------------------------------
+
+
+def test_update_activity_partial_body(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.put(f"{ACTIVITIES_URL}/activity-5").respond(
+        200, json={**YOGA_JSON, "price": 25}
+    )
+    with ApiClient(BASE_URL, token="tok-123") as client:
+        result = client.update_activity("activity-5", ActivityChanges(price=25.0))
+    assert result.price == 25.0
+    request = route.calls.last.request
+    assert request.headers["Authorization"] == "Bearer tok-123"
+    assert json.loads(request.content) == {"price": 25}
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (400, "Validation failed"),
+        (403, "You can only update your own activities"),
+        (404, "Activity not found"),
+    ],
+)
+def test_update_activity_errors(respx_mock: respx.MockRouter, status: int, message: str) -> None:
+    respx_mock.put(f"{ACTIVITIES_URL}/activity-5").respond(
+        status, json={"message": message, "errors": []}
+    )
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.update_activity("activity-5", ActivityChanges(price=25.0))
+    assert exc.value.status_code == status
+    assert str(exc.value) == message
+
+
+def test_update_activity_encodes_id(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.put(f"{ACTIVITIES_URL}/a%2Fb").respond(200, json=YOGA_JSON)
+    with ApiClient(BASE_URL, token="t") as client:
+        client.update_activity("a/b", ActivityChanges(name="x"))
+    assert route.calls.last.request.url.raw_path == b"/activities/a%2Fb"
+
+
+# --- delete_activity -----------------------------------------------------------------
+
+
+def test_delete_activity_no_content(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.delete(f"{ACTIVITIES_URL}/activity-5").respond(204)
+    with ApiClient(BASE_URL, token="tok-123") as client:
+        client.delete_activity("activity-5")
+    assert route.calls.last.request.headers["Authorization"] == "Bearer tok-123"
+
+
+@pytest.mark.parametrize(
+    ("status", "message", "expected"),
+    [
+        (403, "You can only delete your own activities", "You can only delete your own activities"),
+        (404, "Activity not found", "Activity not found"),
+        (500, "Failed to delete activity", "API error 500: Failed to delete activity"),
+    ],
+)
+def test_delete_activity_errors(
+    respx_mock: respx.MockRouter, status: int, message: str, expected: str
+) -> None:
+    respx_mock.delete(f"{ACTIVITIES_URL}/activity-5").respond(
+        status, json={"message": message, "errors": []}
+    )
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.delete_activity("activity-5")
+    assert exc.value.status_code == status
+    assert str(exc.value) == expected

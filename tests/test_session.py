@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from jwt_helpers import make_jwt
 
+from activity_bookings import session as session_module
 from activity_bookings.api_client import User
 from activity_bookings.errors import SessionError
 from activity_bookings.session import (
@@ -14,6 +15,7 @@ from activity_bookings.session import (
     default_session_path,
     delete_session,
     load_session,
+    require_session,
     save_session,
     token_expiry,
 )
@@ -175,3 +177,86 @@ def test_token_expiry_valid() -> None:
 )
 def test_token_expiry_unreadable(token: str) -> None:
     assert token_expiry(token) is None
+
+
+# --- require_session -----------------------------------------------------------------
+
+EXP_2000 = 946684800
+EXP_2100 = 4102444800
+
+
+def save_with(api_url: str = "http://api.example.com", token: str = "tok-123") -> Session:
+    session = Session(api_url=api_url, access_token=token, user=SESSION.user)
+    save_session(session)
+    return session
+
+
+def test_require_session_without_session() -> None:
+    with pytest.raises(SessionError, match="not logged in") as exc:
+        require_session("http://api.example.com")
+    assert "activity-bookings auth login" in str(exc.value)
+
+
+def test_require_session_invalid_file_propagates() -> None:
+    path = default_session_path()
+    path.parent.mkdir(parents=True)
+    path.write_text("not json", encoding="utf-8")
+    with pytest.raises(SessionError, match="invalid session file") as exc:
+        require_session("http://api.example.com")
+    assert str(path) in str(exc.value)
+
+
+def test_require_session_other_api_url() -> None:
+    save_with(api_url="http://localhost:3000")
+    with pytest.raises(SessionError) as exc:
+        require_session("http://api.example.com")
+    message = str(exc.value)
+    assert "http://localhost:3000" in message
+    assert "http://api.example.com" in message
+    assert "activity-bookings auth login" in message
+
+
+def test_require_session_trailing_slash_is_the_same_api() -> None:
+    session = save_with(api_url="http://api.example.com/", token=make_jwt(EXP_2100))
+    assert require_session("http://api.example.com") == session
+
+
+def test_require_session_expired_token() -> None:
+    save_with(token=make_jwt(EXP_2000))
+    with pytest.raises(SessionError) as exc:
+        require_session("http://api.example.com")
+    message = str(exc.value)
+    assert "expired on 2000-01-01 00:00 UTC" in message
+    assert "activity-bookings auth login" in message
+
+
+def test_require_session_valid_token() -> None:
+    session = save_with(token=make_jwt(EXP_2100))
+    assert require_session("http://api.example.com") == session
+
+
+def test_require_session_uses_patchable_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    save_with(token=make_jwt(EXP_2100))
+    monkeypatch.setattr(session_module, "_now", lambda: datetime(2101, 1, 1, tzinfo=UTC))
+    with pytest.raises(SessionError, match="expired"):
+        require_session("http://api.example.com")
+
+
+def test_require_session_expires_exactly_at_exp(monkeypatch: pytest.MonkeyPatch) -> None:
+    save_with(token=make_jwt(EXP_2100))
+    monkeypatch.setattr(session_module, "_now", lambda: datetime(2100, 1, 1, tzinfo=UTC))
+    with pytest.raises(SessionError, match="expired"):
+        require_session("http://api.example.com")
+
+
+def test_require_session_valid_just_before_exp(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = save_with(token=make_jwt(EXP_2100))
+    monkeypatch.setattr(
+        session_module, "_now", lambda: datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC)
+    )
+    assert require_session("http://api.example.com") == session
+
+
+def test_require_session_unreadable_expiry_is_allowed() -> None:
+    session = save_with(token="tok-123")
+    assert require_session("http://api.example.com") == session
