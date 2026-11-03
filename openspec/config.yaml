@@ -1,0 +1,58 @@
+schema: spec-driven
+
+# Project context: constraints an agent cannot infer by reading the code.
+context: |
+  Idioma: todos los artefactos de OpenSpec (proposal, design, specs, tasks) se escriben en español.
+  El código, identificadores, docstrings, mensajes de commit y textos de la CLI van en inglés.
+
+  Producto: ActivityBookings CLI (comando `activity-bookings`, paquete `activity_bookings`), cliente
+  de consola en Python para la API REST ActivityBookings, un sistema de reserva de actividades
+  usado en sesiones de formación y demos (no es para producción). Funcionalidades:
+  - Cuenta: registro y login; el JWT devuelto se guarda en local y se envía en las rutas protegidas.
+  - Explorar actividades: listar, buscar y ver detalle (precio, fecha, lugar, capacidad, estado).
+  - Reservas: reservar plazas sin superar la capacidad y consultar mis reservas y su estado.
+  - Gestionar mis actividades: crear, editar, borrar y cambiar de estado las actividades propias.
+  Sin base de datos local. La referencia de la API (endpoints, errores, reglas de negocio y fallos
+  conocidos) está en docs/api-reference.md: hay que leerla antes de proponer cualquier change que
+  llame a la API, y respetar el contrato real del servidor, no el de su README.
+
+  Stack obligatorio:
+  - Python 3.12+, proyecto gestionado con uv y pyproject.toml (layout src/).
+  - CLI con Typer; salida en consola con Rich (tablas, colores, errores legibles).
+  - Cliente HTTP con httpx, encapsulado en una capa de cliente de API separada de los comandos.
+  - Configuración (URL base de la API, p. ej. http://localhost:3000) leída de un fichero TOML
+    de usuario; si no existe, se usa un valor por defecto razonable.
+  - Calidad: pytest (HTTP mockeado con respx, sin llamadas reales a la API), ruff (lint + format)
+    y mypy en modo strict.
+
+  Principios: simple y ágil por encima de exhaustivo (YAGNI). Buenas prácticas de Python:
+  type hints en todo, funciones pequeñas, modelos de datos tipados (dataclasses o pydantic),
+  errores de la API traducidos a mensajes claros y códigos de salida distintos de cero.
+
+# Per-artifact rules
+rules:
+  proposal:
+    - Mantener la propuesta breve (menos de 400 palabras)
+    - Indicar siempre qué queda fuera de alcance
+  design:
+    - Justificar cualquier dependencia nueva fuera del stack obligatorio
+    - Describir los comandos de la CLI con ejemplos de uso y de salida
+  specs:
+    - Escribir escenarios en formato Given/When/Then que se puedan traducir directamente a tests de pytest
+    - Incluir escenarios de error (API caída, 401 sin sesión o token caducado, 403/404, 4xx/5xx, capacidad superada, entradas inválidas)
+  tasks:
+    - Tareas atómicas y verificables de unos 30 minutos como máximo
+    - Cada tarea funcional incluye sus tests con pytest
+    - Terminar cada change con una tarea de verificación (ruff check, ruff format --check, mypy, pytest)
+
+# Per-operation guidance
+operations:
+  apply:
+    guidance:
+      - Ejecutar los comandos con uv run (uv run pytest, uv run ruff check, uv run mypy)
+      - No marcar una tarea como completada hasta que sus tests pasen
+      - Resumir los resultados de los tests de forma concisa
+  archive:
+    guidance:
+      - Verificar que ruff, mypy y pytest pasan antes de archivar
+      - Resumir en pocas líneas lo que se ha archivado
