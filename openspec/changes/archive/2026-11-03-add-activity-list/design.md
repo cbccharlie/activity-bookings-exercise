@@ -38,8 +38,8 @@ El comportamiento exigido está en `specs/activity-browsing/spec.md`.
 
 ```
 src/activity_bookings/
-  api_client.py               # + Activity, ActivityStatus (Literal), list_activities()
-  commands/activities_cmd.py  # grupo `activities` con `list`
+  api_client.py               # + Activity, list_activities()
+  commands/activities_cmd.py  # grupo `activities` con `list` (+ SortField, SortOrder, ActivityStatus)
   cli.py                      # app.add_typer(activities_cmd.app, name="activities")
 tests/
   test_api_client.py          # + tests de Activity y list_activities
