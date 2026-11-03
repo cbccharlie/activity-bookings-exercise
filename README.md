@@ -103,6 +103,28 @@ uv run activity-bookings auth logout                 # cerrar la sesión local
 > con los usuarios de los datos de ejemplo (p. ej. `m@f.c`) como con los recién registrados. Si te
 > ocurre, trabaja con la sesión que deja `auth register`.
 
+### Listado de actividades
+
+```bash
+uv run activity-bookings activities list                                 # todas las actividades
+uv run activity-bookings activities list --search bike                   # búsqueda por texto
+uv run activity-bookings activities list --sort price --order desc       # orden en el servidor
+uv run activity-bookings activities list --status published              # solo las publicadas
+```
+
+- Por defecto muestra todas las actividades que devuelve la API, sea cual sea su estado, en una
+  tabla con ID, nombre, fecha, lugar, precio, capacidad y estado. No necesita sesión: la ruta es
+  pública y no se envía el token.
+- `--search TEXT`: la API busca el texto, sin distinguir mayúsculas, en el nombre, el lugar y el
+  slug. No puede estar vacío.
+- `--sort {date,price,name,location}` y `--order {asc,desc}`: la API ordena el listado; `--order`
+  vale `asc` por defecto y solo se puede usar junto con `--sort`.
+- `--status {draft,published,confirmed,sold-out,done,cancelled}`: la API no filtra por estado,
+  así que el filtro se aplica en el cliente sobre la lista recibida.
+- La columna Capacity es la capacidad total (`maxParticipants`), no las plazas libres: la API no
+  las expone.
+- Si no hay resultados, muestra `No activities found.` y termina con código 0.
+
 ### Configuración
 
 La URL de la API se lee de `$XDG_CONFIG_HOME/activity-bookings/config.toml`

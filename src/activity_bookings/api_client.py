@@ -56,6 +56,58 @@ def parse_auth_result(data: object) -> AuthResult:
     return AuthResult(user=user, access_token=access_token)
 
 
+@dataclass(frozen=True)
+class Activity:
+    """An activity as listed by the API. Only the fields the CLI shows are modelled."""
+
+    id: str
+    name: str
+    date: str
+    location: str
+    price: float
+    max_participants: int
+    status: str
+
+
+def parse_activity(data: object, position: int | None = None) -> Activity:
+    """Build an Activity from an API JSON object, raising ApiResponseError if it is malformed.
+
+    The error names the activity by its id or, if that is not valid, by `position`.
+    """
+    label = "activity" if position is None else f"activity at position {position}"
+    if not isinstance(data, dict):
+        raise ApiResponseError(f"invalid response from the API: {label} is not an object")
+    raw_id = data.get("id")
+    if isinstance(raw_id, str) and raw_id:
+        label = f"activity {raw_id}"
+
+    def invalid(field: str) -> ApiResponseError:
+        return ApiResponseError(f"invalid response from the API: {label} has no valid '{field}'")
+
+    price = data.get("price")
+    if isinstance(price, bool) or not isinstance(price, int | float):
+        raise invalid("price")
+    max_participants = data.get("maxParticipants")
+    if isinstance(max_participants, bool) or not isinstance(max_participants, int):
+        raise invalid("maxParticipants")
+
+    fields: dict[str, str] = {}
+    for key in ("id", "name", "date", "location", "status"):
+        value = data.get(key)
+        if not isinstance(value, str) or not value:
+            raise invalid(key)
+        fields[key] = value
+    return Activity(
+        id=fields["id"],
+        name=fields["name"],
+        date=fields["date"],
+        location=fields["location"],
+        price=float(price),
+        max_participants=max_participants,
+        status=fields["status"],
+    )
+
+
 def _require_str(data: dict[str, Any], key: str, label: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value:
@@ -95,10 +147,34 @@ class ApiClient:
         body = {"email": email, "password": password}
         return parse_auth_result(self._request("POST", "/login", json=body))
 
-    def _request(self, method: str, path: str, json: object = None) -> object:
+    def list_activities(
+        self, search: str | None = None, sort: str | None = None, order: str = "asc"
+    ) -> list[Activity]:
+        """List activities with `GET /activities`, optionally searched and sorted by the API.
+
+        `q` is sent only with `search`; `_sort` and `_order` only with `sort`.
+        """
+        params: dict[str, str] = {}
+        if search is not None:
+            params["q"] = search
+        if sort is not None:
+            params["_sort"] = sort
+            params["_order"] = order
+        data = self._request("GET", "/activities", params=params)
+        if not isinstance(data, list):
+            raise ApiResponseError("invalid response from the API: expected a list of activities")
+        return [parse_activity(item, position) for position, item in enumerate(data, start=1)]
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        json: object = None,
+        params: dict[str, str] | None = None,
+    ) -> object:
         """Send a request and return the decoded JSON body, translating every failure."""
         try:
-            response = self._http.request(method, path, json=json)
+            response = self._http.request(method, path, json=json, params=params)
         except httpx.ConnectError as exc:
             raise ApiConnectionError(f"cannot connect to the API at {self.base_url}") from exc
         except httpx.TimeoutException as exc:

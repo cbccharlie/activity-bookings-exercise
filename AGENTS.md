@@ -48,11 +48,12 @@ src/activity_bookings/
   errors.py        # ActivityBookingsError (base), ConfigError, ApiError, ApiConnectionError,
                    # ApiResponseError, SessionError, handle_errors
   console.py       # Rich consoles: console (stdout) and err_console (stderr)
-  api_client.py    # ApiClient (httpx), response models (User, AuthResult), API error translation
+  api_client.py    # ApiClient (httpx), models (User, AuthResult, Activity), error translation
   session.py       # Session, save/load/delete_session() (session.json, mode 0600), token_expiry()
   commands/        # one module per command group
     config_cmd.py  # `config`
     auth_cmd.py    # `auth` group: `register`, `login`, `logout`, `whoami`
+    activities_cmd.py  # `activities` group: `list`
 tests/
   conftest.py      # CliRunner fixture, isolated HOME / XDG_CONFIG_HOME
   test_cli.py
@@ -60,6 +61,7 @@ tests/
   test_api_client.py
   test_session.py
   test_auth_cmd.py
+  test_activities_cmd.py
   jwt_helpers.py   # make_jwt() to build unsigned JWTs in tests
 ```
 
