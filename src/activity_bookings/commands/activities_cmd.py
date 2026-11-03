@@ -8,7 +8,13 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from activity_bookings.api_client import Activity, ActivityChanges, ApiClient, NewActivity
+from activity_bookings.api_client import (
+    Activity,
+    ActivityChanges,
+    ActivityDetail,
+    ApiClient,
+    NewActivity,
+)
 from activity_bookings.commands._auth import authorized_client, login_hint
 from activity_bookings.config import load_settings
 from activity_bookings.console import console
@@ -94,6 +100,51 @@ def list_activities(
     console.print(_activities_table(activities), markup=False, highlight=False)
     count = len(activities)
     console.print(f"{count} {'activity' if count == 1 else 'activities'}", highlight=False)
+
+
+@app.command("show")
+@handle_errors
+def show_activity(
+    ctx: typer.Context,
+    activity_id: Annotated[
+        str, typer.Argument(metavar="ACTIVITY_ID", help="ID of the activity, e.g. activity-2.")
+    ],
+) -> None:
+    """Show all the details of one activity. Capacity is the total size, not free places."""
+    if not activity_id.strip():
+        raise typer.BadParameter("ACTIVITY_ID cannot be empty", param_hint="ACTIVITY_ID")
+    config_path: Path | None = ctx.obj
+    settings = load_settings(config_path)
+    with ApiClient(settings.api_url) as client:
+        detail = client.get_activity(activity_id.strip())
+    console.print(_detail_table(detail), markup=False, highlight=False)
+
+
+def _detail_table(detail: ActivityDetail) -> Table:
+    activity = detail.activity
+    table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    table.add_column(style="bold", no_wrap=True)
+    table.add_column(overflow="fold")
+    table.add_row("ID", activity.id)
+    table.add_row("Name", activity.name)
+    table.add_row("Slug", detail.slug)
+    table.add_row("Date", _format_date(activity.date))
+    table.add_row("Duration", _format_duration(detail.duration))
+    table.add_row("Location", activity.location)
+    table.add_row("Price", _format_price(activity.price))
+    table.add_row("Min participants", str(detail.min_participants))
+    table.add_row("Capacity", str(activity.max_participants))
+    table.add_row("Status", activity.status)
+    table.add_row("Organizer", detail.user_id)
+    table.add_row("Created", _format_date(detail.created_at))
+    if detail.updated_at is not None:
+        table.add_row("Updated", _format_date(detail.updated_at))
+    return table
+
+
+def _format_duration(minutes: int) -> str:
+    """Show a duration in minutes, e.g. `120 min`."""
+    return f"{minutes} min"
 
 
 @app.command("create")

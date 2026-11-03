@@ -109,6 +109,58 @@ def parse_activity(data: object, position: int | None = None) -> Activity:
     )
 
 
+@dataclass(frozen=True)
+class ActivityDetail:
+    """An activity as returned by `GET /activities/:id`: the listed fields plus the detail."""
+
+    activity: Activity
+    slug: str
+    duration: int
+    min_participants: int
+    user_id: str
+    created_at: str
+    updated_at: str | None
+
+
+def parse_activity_detail(data: object) -> ActivityDetail:
+    """Build an ActivityDetail from an API JSON object, raising ApiResponseError if malformed."""
+    if not isinstance(data, dict):
+        raise ApiResponseError("invalid response from the API: expected an activity")
+    activity = parse_activity(data)
+
+    def invalid(field: str) -> ApiResponseError:
+        return ApiResponseError(
+            f"invalid response from the API: activity {activity.id} has no valid '{field}'"
+        )
+
+    def whole_number(key: str) -> int:
+        value = data.get(key)
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise invalid(key)
+        return value
+
+    texts: dict[str, str] = {}
+    for key in ("slug", "userId", "createdAt"):
+        value = data.get(key)
+        if not isinstance(value, str):
+            raise invalid(key)
+        texts[key] = value
+    updated_at = data.get("updatedAt")
+    if updated_at is not None and not isinstance(updated_at, str):
+        raise invalid("updatedAt")
+    return ActivityDetail(
+        activity=activity,
+        slug=texts["slug"],
+        duration=whole_number("duration"),
+        min_participants=whole_number("minParticipants"),
+        user_id=texts["userId"],
+        created_at=texts["createdAt"],
+        updated_at=updated_at,
+    )
+
+
 _JSON_KEYS = {"min_participants": "minParticipants", "max_participants": "maxParticipants"}
 
 
@@ -224,6 +276,10 @@ class ApiClient:
         if not isinstance(data, list):
             raise ApiResponseError("invalid response from the API: expected a list of activities")
         return [parse_activity(item, position) for position, item in enumerate(data, start=1)]
+
+    def get_activity(self, activity_id: str) -> ActivityDetail:
+        """Get one activity with `GET /activities/<id>` (public, no token needed)."""
+        return parse_activity_detail(self._request("GET", _activity_path(activity_id)))
 
     def create_activity(self, activity: NewActivity) -> Activity:
         """Create an activity with `POST /activities` (requires a token) and return it."""

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -811,3 +812,185 @@ def test_delete_errors(
     result = delete(runner, activity_id, "--yes")
     assert_clean_failure(result)
     assert expected in result.stderr
+
+
+# --- show ----------------------------------------------------------------------------
+
+ACTIVITY_2_URL = f"{ACTIVITIES_URL}/activity-2"
+DETAIL = activity(duration=120, minParticipants=3, createdAt="2026-01-16T10:00:00.000Z")
+del DETAIL["updatedAt"]
+
+
+def show(runner: CliRunner, *args: str) -> Result:
+    return runner.invoke(app, ["activities", "show", *args])
+
+
+def test_group_help_lists_show(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["activities", "--help"])
+    assert result.exit_code == 0
+    assert "show" in result.stdout
+
+
+def test_show_uses_configured_api(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    write_config(CUSTOM_API_URL)
+    route = respx_mock.get(f"{CUSTOM_API_URL}/activities/activity-2").respond(200, json=DETAIL)
+    result = show(runner, "activity-2")
+    assert result.exit_code == 0, result.output
+    assert route.call_count == 1
+    assert respx_mock.calls.call_count == 1
+
+
+def test_show_encodes_reserved_characters(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(f"{ACTIVITIES_URL}/a%2Fb%20c").respond(
+        404, json={"message": "Activity not found", "errors": []}
+    )
+    result = show(runner, "a/b c")
+    assert result.exit_code == 1
+    assert route.calls.last.request.url.raw_path == b"/activities/a%2Fb%20c"
+
+
+def test_show_without_id(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    assert_usage_error(show(runner), respx_mock, "ACTIVITY_ID")
+
+
+def test_show_blank_id(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    assert_usage_error(show(runner, " "), respx_mock, "ACTIVITY_ID cannot be empty")
+
+
+def test_show_invalid_config(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    write_config("ftp://example.com")
+    result = show(runner, "activity-2")
+    assert_clean_failure(result)
+    assert "api_url" in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+def test_show_sends_no_credentials(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(ACTIVITY_2_URL).respond(200, json=DETAIL)
+    result = show(runner, "activity-2")
+    assert result.exit_code == 0
+    assert "Authorization" not in route.calls.last.request.headers
+
+
+def test_show_with_session_still_sends_no_credentials(
+    runner: CliRunner, respx_mock: respx.MockRouter
+) -> None:
+    login_as()
+    route = respx_mock.get(ACTIVITY_2_URL).respond(200, json=DETAIL)
+    result = show(runner, "activity-2")
+    assert result.exit_code == 0
+    assert "Authorization" not in route.calls.last.request.headers
+
+
+def test_show_complete_activity(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).respond(200, json=DETAIL)
+    result = show(runner, "activity-2")
+    assert result.exit_code == 0
+    rows = {
+        "ID": "activity-2",
+        "Name": "City Bike Tour",
+        "Slug": "city-bike-tour",
+        "Date": "2026-12-20",
+        "Duration": "120 min",
+        "Location": "City Center",
+        "Price": "35.00",
+        "Min participants": "3",
+        "Capacity": "15",
+        "Status": "published",
+        "Organizer": "user-1",
+        "Created": "2026-01-16 10:00 UTC",
+    }
+    for label, value in rows.items():
+        pattern = rf"^{re.escape(label)}\s+{re.escape(value)}\s*$"
+        assert re.search(pattern, result.stdout, re.MULTILINE), f"row {label!r}"
+    assert "Updated" not in result.stdout
+
+
+def test_show_updated_activity(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).respond(
+        200, json={**DETAIL, "updatedAt": "2026-02-01T08:30:00.000Z"}
+    )
+    result = show(runner, "activity-2")
+    assert "Updated" in result.stdout
+    assert "2026-02-01 08:30 UTC" in result.stdout
+
+
+def test_show_date_with_time(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(f"{ACTIVITIES_URL}/activity-3").respond(
+        200, json={**DETAIL, "id": "activity-3", "date": "2026-08-25T14:00:00.000Z"}
+    )
+    result = show(runner, "activity-3")
+    assert "2026-08-25 14:00 UTC" in result.stdout
+
+
+def test_show_unparseable_date(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).respond(200, json={**DETAIL, "createdAt": "someday"})
+    result = show(runner, "activity-2")
+    assert result.exit_code == 0
+    assert "someday" in result.stdout
+
+
+def test_show_ignores_unknown_fields(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).respond(200, json={**DETAIL, "extra": "surprise"})
+    result = show(runner, "activity-2")
+    assert result.exit_code == 0
+    assert "extra" not in result.stdout
+    assert "surprise" not in result.stdout
+
+
+# --- show: errors --------------------------------------------------------------------
+
+
+def test_show_activity_not_found(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(f"{ACTIVITIES_URL}/activity-99").respond(
+        404, json={"message": "Activity not found", "errors": []}
+    )
+    result = show(runner, "activity-99")
+    assert_clean_failure(result)
+    assert "Error: Activity not found" in result.stderr
+
+
+def test_show_api_down(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).mock(side_effect=httpx.ConnectError("refused"))
+    result = show(runner, "activity-2")
+    assert_clean_failure(result)
+    assert "Error: cannot connect to the API at http://localhost:3000" in result.stderr
+
+
+def test_show_timeout(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    result = show(runner, "activity-2")
+    assert_clean_failure(result)
+    assert "did not respond in time" in result.stderr
+
+
+def test_show_server_error(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).respond(
+        500, json={"message": "Failed to retrieve activity", "errors": []}
+    )
+    result = show(runner, "activity-2")
+    assert_clean_failure(result)
+    assert "Error: API error 500: Failed to retrieve activity" in result.stderr
+
+
+def test_show_html_404(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).respond(404, html="<h1>Not Found</h1>")
+    result = show(runner, "activity-2")
+    assert_clean_failure(result)
+    assert "Error: API returned HTTP 404 with an unexpected response" in result.stderr
+
+
+def test_show_response_not_an_object(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(ACTIVITY_2_URL).respond(200, json=[])
+    result = show(runner, "activity-2")
+    assert_clean_failure(result)
+    assert result.stderr.startswith("Error: invalid response from the API")
+
+
+def test_show_activity_without_duration(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    data = {key: value for key, value in DETAIL.items() if key != "duration"}
+    respx_mock.get(ACTIVITY_2_URL).respond(200, json=data)
+    result = show(runner, "activity-2")
+    assert_clean_failure(result)
+    assert result.stderr.startswith("Error: invalid response from the API")
+    assert "duration" in result.stderr

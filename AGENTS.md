@@ -56,7 +56,7 @@ src/activity_bookings/
     _auth.py       # protected-route helpers: authorized_client(), login_hint() (401 → login hint)
     config_cmd.py  # `config`
     auth_cmd.py    # `auth` group: `register`, `login`, `logout`, `whoami`
-    activities_cmd.py  # `activities` group: `list`, `create`, `update`, `delete`
+    activities_cmd.py  # `activities` group: `list`, `show`, `create`, `update`, `delete`
 tests/
   conftest.py      # CliRunner fixture, isolated HOME / XDG_CONFIG_HOME
   test_cli.py

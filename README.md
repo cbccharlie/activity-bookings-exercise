@@ -125,6 +125,21 @@ uv run activity-bookings activities list --status published              # solo 
   las expone.
 - Si no hay resultados, muestra `No activities found.` y termina con código 0.
 
+### Detalle de una actividad
+
+```bash
+uv run activity-bookings activities show activity-2
+```
+
+- `ACTIVITY_ID` (obligatorio, no puede estar vacío) es el ID que muestra `activities list`, p. ej.
+  `activity-2`. No se puede buscar por slug ni por nombre.
+- No necesita sesión: la ruta es pública y no se envía el token aunque haya una sesión guardada.
+- Muestra una ficha con ID, Name, Slug, Date, Duration (en minutos), Location, Price, Min
+  participants, Capacity, Status, Organizer (el `userId` del dueño; la API no da su nombre),
+  Created y, si la actividad se ha modificado, Updated.
+- Capacity es la capacidad total (`maxParticipants`), no las plazas libres: la API no las expone.
+- Si la actividad no existe, muestra `Error: Activity not found` y termina con código 1.
+
 ### Gestión de mis actividades
 
 ```bash

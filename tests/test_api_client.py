@@ -8,11 +8,13 @@ import respx
 from activity_bookings.api_client import (
     Activity,
     ActivityChanges,
+    ActivityDetail,
     ApiClient,
     AuthResult,
     NewActivity,
     User,
     parse_activity,
+    parse_activity_detail,
     parse_auth_result,
 )
 from activity_bookings.errors import (
@@ -586,5 +588,110 @@ def test_delete_activity_errors(
     )
     with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
         client.delete_activity("activity-5")
+    assert exc.value.status_code == status
+    assert str(exc.value) == expected
+
+
+# --- activity detail -----------------------------------------------------------------
+
+DETAIL_JSON = {
+    **ACTIVITY_JSON,
+    "duration": 120,
+    "minParticipants": 3,
+    "createdAt": "2026-01-16T10:00:00.000Z",
+}
+CITY_BIKE_TOUR_DETAIL = ActivityDetail(
+    activity=CITY_BIKE_TOUR,
+    slug="city-bike-tour",
+    duration=120,
+    min_participants=3,
+    user_id="user-1",
+    created_at="2026-01-16T10:00:00.000Z",
+    updated_at=None,
+)
+
+
+def test_parse_activity_detail_complete() -> None:
+    data = {**DETAIL_JSON, "updatedAt": "2026-02-01T08:30:00.000Z"}
+    assert parse_activity_detail(data) == dataclasses.replace(
+        CITY_BIKE_TOUR_DETAIL, updated_at="2026-02-01T08:30:00.000Z"
+    )
+
+
+def test_parse_activity_detail_without_updated_at() -> None:
+    assert parse_activity_detail(DETAIL_JSON) == CITY_BIKE_TOUR_DETAIL
+
+
+def test_parse_activity_detail_null_updated_at() -> None:
+    assert parse_activity_detail({**DETAIL_JSON, "updatedAt": None}) == CITY_BIKE_TOUR_DETAIL
+
+
+def test_parse_activity_detail_whole_float_duration() -> None:
+    detail = parse_activity_detail({**DETAIL_JSON, "duration": 120.0})
+    assert detail.duration == 120
+    assert isinstance(detail.duration, int)
+
+
+@pytest.mark.parametrize("duration", [None, True, 1.5, "120"])
+def test_parse_activity_detail_invalid_duration(duration: object) -> None:
+    data = {**DETAIL_JSON, "duration": duration}
+    with pytest.raises(ApiResponseError, match="activity activity-2 has no valid 'duration'"):
+        parse_activity_detail(data)
+
+
+def test_parse_activity_detail_missing_duration() -> None:
+    data = {key: value for key, value in DETAIL_JSON.items() if key != "duration"}
+    with pytest.raises(ApiResponseError, match="'duration'"):
+        parse_activity_detail(data)
+
+
+def test_parse_activity_detail_user_id_not_text() -> None:
+    with pytest.raises(ApiResponseError, match="'userId'"):
+        parse_activity_detail({**DETAIL_JSON, "userId": 1})
+
+
+def test_parse_activity_detail_updated_at_not_text() -> None:
+    with pytest.raises(ApiResponseError, match="'updatedAt'"):
+        parse_activity_detail({**DETAIL_JSON, "updatedAt": 5})
+
+
+@pytest.mark.parametrize("data", [[], "x", None])
+def test_parse_activity_detail_not_an_object(data: object) -> None:
+    with pytest.raises(ApiResponseError, match=r"^invalid response from the API: expected an"):
+        parse_activity_detail(data)
+
+
+def test_get_activity(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(f"{ACTIVITIES_URL}/activity-2").respond(200, json=DETAIL_JSON)
+    with ApiClient(BASE_URL) as client:
+        assert client.get_activity("activity-2") == CITY_BIKE_TOUR_DETAIL
+    assert route.call_count == 1
+    assert "Authorization" not in route.calls.last.request.headers
+
+
+def test_get_activity_encodes_id(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(f"{ACTIVITIES_URL}/a%2Fb%20c").respond(
+        404, json={"message": "Activity not found", "errors": []}
+    )
+    with ApiClient(BASE_URL) as client, pytest.raises(ApiError):
+        client.get_activity("a/b c")
+    assert route.calls.last.request.url.raw_path == b"/activities/a%2Fb%20c"
+
+
+@pytest.mark.parametrize(
+    ("status", "message", "expected"),
+    [
+        (404, "Activity not found", "Activity not found"),
+        (500, "Failed to retrieve activity", "API error 500: Failed to retrieve activity"),
+    ],
+)
+def test_get_activity_errors(
+    respx_mock: respx.MockRouter, status: int, message: str, expected: str
+) -> None:
+    respx_mock.get(f"{ACTIVITIES_URL}/activity-2").respond(
+        status, json={"message": message, "errors": []}
+    )
+    with ApiClient(BASE_URL) as client, pytest.raises(ApiError) as exc:
+        client.get_activity("activity-2")
     assert exc.value.status_code == status
     assert str(exc.value) == expected
