@@ -6,7 +6,7 @@ from typing import Annotated
 import typer
 
 from activity_bookings import __version__
-from activity_bookings.commands import activities_cmd, auth_cmd, config_cmd
+from activity_bookings.commands import activities_cmd, auth_cmd, bookings_cmd, config_cmd
 from activity_bookings.console import console
 
 app = typer.Typer(
@@ -48,6 +48,7 @@ def root(
 app.command("config")(config_cmd.config)
 app.add_typer(auth_cmd.app, name="auth")
 app.add_typer(activities_cmd.app, name="activities")
+app.add_typer(bookings_cmd.app, name="bookings")
 
 
 def main() -> None:

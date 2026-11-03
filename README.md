@@ -181,6 +181,32 @@ uv run activity-bookings activities delete activity-5 --yes    # sin confirmaci�
 > - (7) El servidor no impide borrar una actividad con reservas. Después, `GET /bookings` y
 >   `GET /bookings/:id` de esas reservas probablemente respondan con un error 500.
 
+### Reservar plazas
+
+```bash
+uv run activity-bookings bookings create activity-2              # 1 plaza, pide confirmación [y/N]
+uv run activity-bookings bookings create activity-2 -p 2         # 2 plazas (también --participants)
+uv run activity-bookings bookings create activity-2 -p 2 --yes   # sin confirmación (también -y)
+```
+
+- `ACTIVITY_ID` (obligatorio, no puede estar vacío) es el ID que muestra `activities list`.
+- `--participants` / `-p`: número entero de plazas, 1 o más; por defecto, 1.
+- Necesita sesión y aplica las mismas comprobaciones que la gestión de actividades (sin sesión,
+  sesión de otra API o caducada: falla sin llamar a la API; 401: sugiere `auth login`).
+- Antes de reservar consulta la actividad y solo sigue si está `published` y su fecha no ha
+  pasado. Una fecha sin hora cuenta como no pasada durante todo ese día y las fechas se comparan
+  en UTC, no en tu zona horaria. El servidor no hace esta comprobación.
+- Sin `--yes` / `-y`, pide confirmación (por defecto «no») con la actividad, la fecha, las plazas y
+  el total. Si no se confirma, muestra `Booking cancelled.` y termina con código 0.
+- El total (precio × plazas) lo calcula la CLI: la API no devuelve el importe cobrado.
+- **El cobro es inmediato y la reserva no se puede cancelar ni modificar**: la API no lo permite.
+- Si va bien, muestra `Booking <id> created.` y una ficha con ID, Activity, Date, Participants,
+  Total y Payment (el estado del pago).
+- Los errores de la API se muestran como `Error: ...` con código 1, p. ej.
+  `Capacity exceeded. Available: 13, Requested: 20`. La capacidad la comprueba el servidor.
+- El pago rechazado (402, `Payment could not be processed`) solo ocurre cuando el importe es
+  múltiplo de 1000; con los datos de ejemplo, en la práctica no se puede provocar.
+
 ### Configuración
 
 La URL de la API se lee de `$XDG_CONFIG_HOME/activity-bookings/config.toml`

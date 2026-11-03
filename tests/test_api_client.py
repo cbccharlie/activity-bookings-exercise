@@ -11,11 +11,13 @@ from activity_bookings.api_client import (
     ActivityDetail,
     ApiClient,
     AuthResult,
+    Booking,
     NewActivity,
     User,
     parse_activity,
     parse_activity_detail,
     parse_auth_result,
+    parse_booking,
 )
 from activity_bookings.errors import (
     ApiConnectionError,
@@ -695,3 +697,119 @@ def test_get_activity_errors(
         client.get_activity("activity-2")
     assert exc.value.status_code == status
     assert str(exc.value) == expected
+
+
+# --- bookings ------------------------------------------------------------------------
+
+BOOKINGS_URL = f"{BASE_URL}/bookings"
+BOOKING_JSON: dict[str, object] = {
+    "id": "booking-1",
+    "activityId": "activity-2",
+    "userId": "user-1",
+    "participants": 2,
+    "createdAt": "2026-11-03T10:00:00.000Z",
+    "paymentId": "payment-1",
+    "paymentStatus": "paid",
+}
+BOOKING = Booking(
+    id="booking-1",
+    activity_id="activity-2",
+    user_id="user-1",
+    participants=2,
+    created_at="2026-11-03T10:00:00.000Z",
+    payment_status="paid",
+)
+
+
+def test_parse_booking() -> None:
+    assert parse_booking(BOOKING_JSON) == BOOKING
+
+
+def test_parse_booking_without_payment_status() -> None:
+    data = {key: value for key, value in BOOKING_JSON.items() if key != "paymentStatus"}
+    assert parse_booking(data).payment_status == "pending"
+
+
+def test_parse_booking_whole_float_participants() -> None:
+    booking = parse_booking({**BOOKING_JSON, "participants": 2.0})
+    assert booking.participants == 2
+    assert isinstance(booking.participants, int)
+
+
+@pytest.mark.parametrize(
+    ("override", "field"),
+    [
+        ({"participants": True}, "participants"),
+        ({"participants": "2"}, "participants"),
+        ({"participants": 2.5}, "participants"),
+        ({"id": None}, "id"),
+        ({"paymentStatus": 1}, "paymentStatus"),
+    ],
+)
+def test_parse_booking_invalid_field(override: dict[str, object], field: str) -> None:
+    with pytest.raises(ApiResponseError) as exc:
+        parse_booking({**BOOKING_JSON, **override})
+    assert str(exc.value) == f"invalid response from the API: booking has no valid '{field}'"
+
+
+def test_parse_booking_missing_id() -> None:
+    data = {key: value for key, value in BOOKING_JSON.items() if key != "id"}
+    with pytest.raises(ApiResponseError, match="booking has no valid 'id'"):
+        parse_booking(data)
+
+
+@pytest.mark.parametrize("data", [[], "x", None])
+def test_parse_booking_not_an_object(data: object) -> None:
+    with pytest.raises(ApiResponseError, match="booking is not an object"):
+        parse_booking(data)
+
+
+def test_create_booking(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.post(BOOKINGS_URL).respond(201, json=BOOKING_JSON)
+    with ApiClient(BASE_URL, token="tok-123") as client:
+        assert client.create_booking("activity-2", 2) == BOOKING
+    request = route.calls.last.request
+    assert request.headers["Authorization"] == "Bearer tok-123"
+    body = json.loads(request.content)
+    assert body == {"activityId": "activity-2", "participants": 2}
+    assert type(body["participants"]) is int
+
+
+@pytest.mark.parametrize(
+    ("status", "message", "expected"),
+    [
+        (
+            400,
+            "Capacity exceeded. Available: 13, Requested: 20",
+            "Capacity exceeded. Available: 13, Requested: 20",
+        ),
+        (402, "Payment could not be processed", "Payment could not be processed"),
+        (404, "Activity not found", "Activity not found"),
+        (500, "Internal error", "API error 500: Internal error"),
+    ],
+)
+def test_create_booking_errors(
+    respx_mock: respx.MockRouter, status: int, message: str, expected: str
+) -> None:
+    respx_mock.post(BOOKINGS_URL).respond(status, json={"message": message, "errors": []})
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.create_booking("activity-2", 20)
+    assert exc.value.status_code == status
+    assert str(exc.value) == expected
+
+
+def test_create_booking_validation_error(respx_mock: respx.MockRouter) -> None:
+    error = {"field": "participants", "message": "Participants must be at least 1"}
+    respx_mock.post(BOOKINGS_URL).respond(
+        400, json={"message": "Validation failed", "errors": [error]}
+    )
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.create_booking("activity-2", 1)
+    assert exc.value.status_code == 400
+    assert exc.value.field_errors == (FieldError(**error),)
+
+
+def test_create_booking_incomplete_response(respx_mock: respx.MockRouter) -> None:
+    respx_mock.post(BOOKINGS_URL).respond(201, json={"activityId": "activity-2"})
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiResponseError):
+        client.create_booking("activity-2", 1)

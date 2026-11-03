@@ -161,6 +161,56 @@ def parse_activity_detail(data: object) -> ActivityDetail:
     )
 
 
+@dataclass(frozen=True)
+class Booking:
+    """A booking as returned by `POST /bookings`. The amount charged is not returned."""
+
+    id: str
+    activity_id: str
+    user_id: str
+    participants: int
+    created_at: str
+    payment_status: str
+
+
+def parse_booking(data: object) -> Booking:
+    """Build a Booking from an API JSON object, raising ApiResponseError if it is malformed.
+
+    A missing `paymentStatus` means `pending`, as the API does in `GET /bookings`.
+    """
+    if not isinstance(data, dict):
+        raise ApiResponseError("invalid response from the API: booking is not an object")
+
+    def invalid(field: str) -> ApiResponseError:
+        return ApiResponseError(f"invalid response from the API: booking has no valid '{field}'")
+
+    texts: dict[str, str] = {}
+    for key in ("id", "activityId", "userId", "createdAt"):
+        value = data.get(key)
+        if not isinstance(value, str) or not value:
+            raise invalid(key)
+        texts[key] = value
+
+    participants = data.get("participants")
+    if isinstance(participants, float) and participants.is_integer():
+        participants = int(participants)
+    if isinstance(participants, bool) or not isinstance(participants, int):
+        raise invalid("participants")
+
+    payment_status = data.get("paymentStatus", "pending")
+    if not isinstance(payment_status, str) or not payment_status:
+        raise invalid("paymentStatus")
+
+    return Booking(
+        id=texts["id"],
+        activity_id=texts["activityId"],
+        user_id=texts["userId"],
+        participants=participants,
+        created_at=texts["createdAt"],
+        payment_status=payment_status,
+    )
+
+
 _JSON_KEYS = {"min_participants": "minParticipants", "max_participants": "maxParticipants"}
 
 
@@ -293,6 +343,11 @@ class ApiClient:
     def delete_activity(self, activity_id: str) -> None:
         """Delete an activity with `DELETE /activities/<id>` (requires a token)."""
         self._request("DELETE", _activity_path(activity_id), expect_body=False)
+
+    def create_booking(self, activity_id: str, participants: int) -> Booking:
+        """Book seats with `POST /bookings` (requires a token); the API charges at once."""
+        body = {"activityId": activity_id, "participants": participants}
+        return parse_booking(self._request("POST", "/bookings", json=body))
 
     def _request(
         self,
