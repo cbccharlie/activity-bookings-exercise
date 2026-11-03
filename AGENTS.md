@@ -49,10 +49,10 @@ src/activity_bookings/
                    # ApiResponseError, SessionError, handle_errors
   console.py       # Rich consoles: console (stdout) and err_console (stderr)
   api_client.py    # ApiClient (httpx), response models (User, AuthResult), API error translation
-  session.py       # Session, default_session_path(), save_session() (session.json, mode 0600)
+  session.py       # Session, save/load/delete_session() (session.json, mode 0600), token_expiry()
   commands/        # one module per command group
     config_cmd.py  # `config`
-    auth_cmd.py    # `auth` group: `register`
+    auth_cmd.py    # `auth` group: `register`, `login`, `logout`, `whoami`
 tests/
   conftest.py      # CliRunner fixture, isolated HOME / XDG_CONFIG_HOME
   test_cli.py
@@ -60,6 +60,7 @@ tests/
   test_api_client.py
   test_session.py
   test_auth_cmd.py
+  jwt_helpers.py   # make_jwt() to build unsigned JWTs in tests
 ```
 
 New command groups go in a new module under `commands/` and are registered in `cli.py`.

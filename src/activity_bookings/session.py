@@ -1,14 +1,19 @@
 """Local session storage: the JWT returned by the API and the logged-in user."""
 
+import base64
+import binascii
 import json
 import os
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from activity_bookings.api_client import User
+from activity_bookings.api_client import User, parse_user
 from activity_bookings.config import config_dir
-from activity_bookings.errors import SessionError
+from activity_bookings.errors import ApiResponseError, SessionError
+
+LOGIN_HINT = "run 'activity-bookings auth login' to start a new session"
 
 
 @dataclass(frozen=True)
@@ -60,3 +65,76 @@ def _write_atomically(target: Path, content: str) -> None:
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)
         raise
+
+
+def load_session(path: Path | None = None) -> Session | None:
+    """Read the saved session, or return None if there is none.
+
+    An unreadable or malformed file raises SessionError with its path and a login hint.
+    """
+    target = path if path is not None else default_session_path()
+    try:
+        text = target.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _invalid_session(target, exc.strerror or str(exc)) from exc
+
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise _invalid_session(target, "not valid JSON") from exc
+    return _from_json(data, target)
+
+
+def delete_session(path: Path | None = None) -> bool:
+    """Delete the session file without reading it. Return False if there was none."""
+    target = path if path is not None else default_session_path()
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        cause = exc.strerror or str(exc)
+        raise SessionError(f"the session file {target} could not be removed: {cause}") from exc
+    return True
+
+
+def token_expiry(token: str) -> datetime | None:
+    """Return the `exp` claim of a JWT as a UTC datetime, without verifying it.
+
+    Returns None if the token is not a JWT or has no readable integer `exp`.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except (ValueError, binascii.Error):
+        return None
+    exp = claims.get("exp") if isinstance(claims, dict) else None
+    if isinstance(exp, bool) or not isinstance(exp, int):
+        return None
+    try:
+        return datetime.fromtimestamp(exp, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _from_json(data: object, target: Path) -> Session:
+    if not isinstance(data, dict):
+        raise _invalid_session(target, "not a JSON object")
+    for key in ("api_url", "access_token"):
+        value = data.get(key)
+        if not isinstance(value, str) or not value:
+            raise _invalid_session(target, f"missing or invalid '{key}'")
+    try:
+        user = parse_user(data.get("user"))
+    except ApiResponseError as exc:
+        raise _invalid_session(target, "missing or invalid 'user'") from exc
+    return Session(api_url=data["api_url"], access_token=data["access_token"], user=user)
+
+
+def _invalid_session(target: Path, cause: str) -> SessionError:
+    return SessionError(f"invalid session file {target}: {cause}; {LOGIN_HINT}")

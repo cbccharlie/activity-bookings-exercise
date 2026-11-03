@@ -77,6 +77,32 @@ la sesión anterior; uno fallido la deja intacta. El token se guarda en texto pl
 > `user-1` de los datos de ejemplo. Por eso el token del registro es hoy la forma fiable de
 > empezar a trabajar.
 
+### Sesión: login, logout y whoami
+
+```bash
+uv run activity-bookings auth login --email m@f.c   # iniciar sesión con una cuenta existente
+uv run activity-bookings auth whoami                 # ver la sesión actual
+uv run activity-bookings auth logout                 # cerrar la sesión local
+```
+
+- `auth login`: `--email` se pide de forma interactiva si se omite. La contraseña se pide siempre
+  por un prompt oculto, sin confirmación; no existe opción `--password`. Un login correcto guarda
+  la sesión en el mismo fichero que el registro (`session.json`, permisos `0600`) y sustituye la
+  anterior; uno fallido la deja intacta.
+- `auth logout`: borra el fichero de sesión local, aunque esté corrupto. Si no hay sesión, muestra
+  `Not logged in.` y termina sin error. No llama a la API: la API no tiene endpoint de logout, así
+  que el token no se invalida en el servidor y sigue siendo válido hasta que caduca (24 h).
+- `auth whoami`: muestra el usuario, el email, el ID, la URL de la API y la caducidad del token,
+  leídos de la sesión local sin consultar la API. La caducidad se lee del JWT sin verificar su
+  firma; si ya ha pasado, se marca como `(expired)` y se sugiere volver a hacer login, y si no se
+  puede leer se muestra `unknown`. Sin sesión, o con un fichero de sesión inválido, termina con
+  `Error:` y código 1.
+
+> **Fallo conocido del servidor** (punto 1 de «Discrepancias y dudas» en
+> `docs/api-reference.md`): `auth login` probablemente responda `Invalid email or password` tanto
+> con los usuarios de los datos de ejemplo (p. ej. `m@f.c`) como con los recién registrados. Si te
+> ocurre, trabaja con la sesión que deja `auth register`.
+
 ### Configuración
 
 La URL de la API se lee de `$XDG_CONFIG_HOME/activity-bookings/config.toml`

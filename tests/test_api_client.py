@@ -181,3 +181,56 @@ def test_register_success_without_token(respx_mock: respx.MockRouter) -> None:
     respx_mock.post(f"{BASE_URL}/users").respond(201, json={"user": {"id": 2}})
     with pytest.raises(ApiResponseError):
         register()
+
+
+# --- ApiClient.login -----------------------------------------------------------------
+
+LOGIN_OK = {
+    "user": {"id": 1, "username": "Mark Musk", "email": "m@f.c", "terms": True},
+    "accessToken": "tok-123",
+}
+
+
+def login() -> AuthResult:
+    with ApiClient(BASE_URL) as client:
+        return client.login("m@f.c", "1234aB")
+
+
+def test_login_sends_body_and_parses_result(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.post(f"{BASE_URL}/login").respond(200, json=LOGIN_OK)
+    result = login()
+    assert result == AuthResult(
+        user=User(id=1, username="Mark Musk", email="m@f.c"), access_token="tok-123"
+    )
+    assert json.loads(route.calls.last.request.content) == {
+        "email": "m@f.c",
+        "password": "1234aB",
+    }
+
+
+def test_login_invalid_credentials(respx_mock: respx.MockRouter) -> None:
+    respx_mock.post(f"{BASE_URL}/login").respond(
+        401, json={"message": "Invalid email or password", "errors": []}
+    )
+    with pytest.raises(ApiError) as exc:
+        login()
+    assert exc.value.status_code == 401
+    assert str(exc.value) == "Invalid email or password"
+
+
+def test_login_validation_error(respx_mock: respx.MockRouter) -> None:
+    message = "Email is required and must be a non-empty string"
+    respx_mock.post(f"{BASE_URL}/login").respond(
+        400,
+        json={"message": "Validation failed", "errors": [{"field": "email", "message": message}]},
+    )
+    with pytest.raises(ApiError) as exc:
+        login()
+    assert exc.value.status_code == 400
+    assert exc.value.field_errors == (FieldError("email", message),)
+
+
+def test_login_success_without_token(respx_mock: respx.MockRouter) -> None:
+    respx_mock.post(f"{BASE_URL}/login").respond(200, json={"user": {"id": 1}})
+    with pytest.raises(ApiResponseError):
+        login()

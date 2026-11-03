@@ -90,6 +90,11 @@ class ApiClient:
         body = {"username": username, "email": email, "password": password, "terms": True}
         return parse_auth_result(self._request("POST", "/users", json=body))
 
+    def login(self, email: str, password: str) -> AuthResult:
+        """Log in with `POST /login` and return the user and its token."""
+        body = {"email": email, "password": password}
+        return parse_auth_result(self._request("POST", "/login", json=body))
+
     def _request(self, method: str, path: str, json: object = None) -> object:
         """Send a request and return the decoded JSON body, translating every failure."""
         try:

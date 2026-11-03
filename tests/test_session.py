@@ -1,13 +1,22 @@
 import json
 import stat
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from jwt_helpers import make_jwt
 
 from activity_bookings.api_client import User
 from activity_bookings.errors import SessionError
-from activity_bookings.session import Session, default_session_path, save_session
+from activity_bookings.session import (
+    Session,
+    default_session_path,
+    delete_session,
+    load_session,
+    save_session,
+    token_expiry,
+)
 
 SESSION = Session(
     api_url="http://api.example.com",
@@ -66,3 +75,103 @@ def test_save_fails_when_directory_is_a_file() -> None:
     with pytest.raises(SessionError) as exc:
         save_session(SESSION)
     assert str(default_session_path()) in str(exc.value)
+
+
+def write_raw_session(content: str) -> Path:
+    path = default_session_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+# --- load_session --------------------------------------------------------------------
+
+
+def test_load_round_trip() -> None:
+    save_session(SESSION)
+    assert load_session() == SESSION
+
+
+def test_load_text_user_id() -> None:
+    session = Session("http://x.example", "tok", User(id="user-1", username="A", email="a@b.c"))
+    save_session(session)
+    assert load_session() == session
+
+
+def test_load_missing_file() -> None:
+    assert load_session() is None
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("not json", "not valid JSON"),
+        ("[]", "not a JSON object"),
+        (
+            '{"api_url": "http://localhost:3000",'
+            ' "user": {"id": 1, "username": "Mark Musk", "email": "m@f.c"}}',
+            "access_token",
+        ),
+        ('{"api_url": "http://localhost:3000", "access_token": "t"}', "'user'"),
+        ('{"access_token": "t", "user": {"id": 1, "username": "A", "email": "a"}}', "api_url"),
+    ],
+)
+def test_load_invalid_file(content: str, expected: str) -> None:
+    path = write_raw_session(content)
+    with pytest.raises(SessionError) as exc:
+        load_session()
+    message = str(exc.value)
+    assert str(path) in message
+    assert expected in message
+    assert "activity-bookings auth login" in message
+
+
+# --- delete_session ------------------------------------------------------------------
+
+
+def test_delete_existing_session() -> None:
+    path = save_session(SESSION)
+    assert delete_session() is True
+    assert not path.exists()
+
+
+def test_delete_missing_session() -> None:
+    assert delete_session() is False
+
+
+def test_delete_corrupt_session() -> None:
+    path = write_raw_session("not json")
+    assert delete_session() is True
+    assert not path.exists()
+
+
+def test_delete_failure() -> None:
+    path = default_session_path()
+    path.mkdir(parents=True)
+    with pytest.raises(SessionError) as exc:
+        delete_session()
+    assert str(path) in str(exc.value)
+
+
+# --- token_expiry --------------------------------------------------------------------
+
+
+def test_token_expiry_valid() -> None:
+    assert token_expiry(make_jwt(4102444800)) == datetime(2100, 1, 1, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "tok-123",
+        "a.b",
+        "header.@@@.signature",
+        "header.bm90IGpzb24.signature",  # base64url of "not json"
+        make_jwt("tomorrow"),
+        make_jwt(True),
+        make_jwt(None),
+        make_jwt(10**20),
+    ],
+)
+def test_token_expiry_unreadable(token: str) -> None:
+    assert token_expiry(token) is None
