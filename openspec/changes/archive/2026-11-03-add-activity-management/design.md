@@ -50,6 +50,7 @@ src/activity_bookings/
   commands/activities_cmd.py  # + create, update, delete
 tests/
   test_api_client.py  test_session.py  test_activities_cmd.py
+  test_auth_helpers.py        # tests unitarios de commands/_auth.py
 ```
 
 ### Cliente de API
@@ -85,7 +86,8 @@ tests/
    `SessionError`.
 2. Si `session.api_url.rstrip("/") != api_url.rstrip("/")`: `SessionError("the session belongs to
    <session url>, but the configured API is <api_url>; run 'activity-bookings auth login'")`.
-3. Si `token_expiry()` devuelve una fecha anterior a `_now()`: `SessionError("your session expired
+3. Si `token_expiry()` devuelve una fecha anterior o igual a `_now()` (como `exp` en JWT y como
+   `whoami`): `SessionError("your session expired
    on <fecha> UTC; run 'activity-bookings auth login'")`. Si devuelve `None`, se continúa: el
    servidor decide. `_now()` es una función pequeña que se puede parchear, igual que en `whoami`.
 
@@ -174,7 +176,10 @@ Ninguna nueva.
   token, los tres métodos con respx (ruta, cuerpo, 201/200/204, 400, 403, 404, 500, respuesta
   incompleta) e ID con `/` codificado.
 - `tests/test_session.py`: `require_session()` sin sesión, con otra `api_url`, con la barra final
-  como única diferencia, con `exp` en 2000 y en 2100, y con un token que no es JWT.
+  como única diferencia, con `exp` en 2000 y en 2100, con `_now()` justo en `exp` y un segundo
+  antes, y con un token que no es JWT.
+- `tests/test_auth_helpers.py`: `authorized_client()` con y sin sesión, y `login_hint()` con 401,
+  con otros errores y sin error.
 - `tests/test_activities_cmd.py`: un test por escenario de las specs. Un fixture escribe una sesión
   válida con `save_session()` y un JWT con `exp` en 2100 (helper de `add-user-login`). Para "sin
   petición HTTP", `respx_mock` sin rutas y `respx_mock.calls` vacío.
