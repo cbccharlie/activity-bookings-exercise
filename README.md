@@ -54,6 +54,29 @@ uv run activity-bookings config      # configuración efectiva (URL de la API y 
 uv run activity-bookings --config ./custom.toml config   # usar otro fichero de configuración
 ```
 
+### Registro de usuarios
+
+```bash
+uv run activity-bookings auth register --username Ana --email ana@example.com --accept-terms
+```
+
+- `--username` y `--email`: si se omiten, se piden de forma interactiva.
+- La contraseña se pide siempre por un prompt oculto, con confirmación; no existe opción
+  `--password`.
+- `--accept-terms`: acepta los términos y condiciones. Sin ella se pregunta, y si se rechazan no
+  se llama a la API.
+
+Si el registro va bien, la sesión queda iniciada: el token JWT devuelto, la URL de la API y los
+datos del usuario se guardan en `$XDG_CONFIG_HOME/activity-bookings/session.json` (por defecto
+`~/.config/activity-bookings/session.json`), con permisos `0600`. Cada registro correcto sustituye
+la sesión anterior; uno fallido la deja intacta. El token se guarda en texto plano.
+
+> **Fallo conocido del servidor** (punto 1 de «Discrepancias y dudas» en
+> `docs/api-reference.md`): por el orden de inicialización de la API, un usuario recién
+> registrado probablemente no pueda hacer login, y el alta podría sobrescribir el usuario
+> `user-1` de los datos de ejemplo. Por eso el token del registro es hoy la forma fiable de
+> empezar a trabajar.
+
 ### Configuración
 
 La URL de la API se lee de `$XDG_CONFIG_HOME/activity-bookings/config.toml`

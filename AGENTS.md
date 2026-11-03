@@ -44,14 +44,22 @@ src/activity_bookings/
   __init__.py      # __version__ via importlib.metadata
   __main__.py      # python -m activity_bookings
   cli.py           # root Typer app: global options (--version, --config), subcommand registry, main()
-  config.py        # Settings, load_settings(), default_config_path()
-  errors.py        # ActivityBookingsError (base) and subclasses such as ConfigError
+  config.py        # Settings, load_settings(), config_dir(), default_config_path()
+  errors.py        # ActivityBookingsError (base), ConfigError, ApiError, ApiConnectionError,
+                   # ApiResponseError, SessionError, handle_errors
   console.py       # Rich consoles: console (stdout) and err_console (stderr)
-  commands/        # one module per command group (config_cmd.py, later auth, activities, bookings)
+  api_client.py    # ApiClient (httpx), response models (User, AuthResult), API error translation
+  session.py       # Session, default_session_path(), save_session() (session.json, mode 0600)
+  commands/        # one module per command group
+    config_cmd.py  # `config`
+    auth_cmd.py    # `auth` group: `register`
 tests/
   conftest.py      # CliRunner fixture, isolated HOME / XDG_CONFIG_HOME
   test_cli.py
   test_config.py
+  test_api_client.py
+  test_session.py
+  test_auth_cmd.py
 ```
 
 New command groups go in a new module under `commands/` and are registered in `cli.py`.

@@ -19,10 +19,15 @@ class Settings:
     source: Path | None
 
 
-def default_config_path() -> Path:
-    """Return `$XDG_CONFIG_HOME/activity-bookings/config.toml` (default `~/.config`)."""
+def config_dir() -> Path:
+    """Return `$XDG_CONFIG_HOME/activity-bookings` (default `~/.config/activity-bookings`)."""
     base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
-    return Path(base) / "activity-bookings" / "config.toml"
+    return Path(base) / "activity-bookings"
+
+
+def default_config_path() -> Path:
+    """Return the default configuration file, `config.toml` inside `config_dir()`."""
+    return config_dir() / "config.toml"
 
 
 def load_settings(path: Path | None = None) -> Settings:
