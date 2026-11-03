@@ -52,7 +52,7 @@ decide en el comando). Un método privado `_request()` centraliza la traducción
 | Otro `httpx.HTTPError` | `ApiConnectionError` | `request to the API failed: <detalle>` |
 | 4xx con JSON `{message, errors}` | `ApiError` | `<message>` y una línea `  - <field>: <message>` por error |
 | 5xx con JSON | `ApiError` | `API error 500: <message>` |
-| Error sin JSON válido | `ApiError` | `API returned HTTP <status> with an unexpected response` |
+| Error sin JSON válido o sin `message` de tipo texto | `ApiError` | `API returned HTTP <status> with an unexpected response` |
 | 2xx con forma inesperada | `ApiResponseError` | `invalid response from the API: <qué falta>` |
 
 `ApiError` guarda `status_code`, `message` y `field_errors: tuple[FieldError, ...]` para que el
@@ -69,7 +69,7 @@ comandos; reparte la traducción de errores por cada comando.
 `Session(api_url, access_token, user: User)`, guardada como JSON en `config_dir() / "session.json"`
 (mismo directorio que `config.toml`). La ruta no depende de `--config`: la opción cambia la
 configuración, no dónde vive la sesión. `save_session()` escribe en un temporal del mismo
-directorio creado con `os.open(..., 0o600)` y lo mueve con `os.replace()`, de modo que la
+directorio creado con `tempfile.mkstemp()` (que lo crea con `0600`) y lo mueve con `os.replace()`, de modo que la
 sustitución es atómica y los permisos quedan en `0600` también al sobrescribir. Cualquier `OSError`
 se convierte en `SessionError` con la ruta. JSON con `json` de la stdlib (escribir TOML exigiría
 una dependencia).
