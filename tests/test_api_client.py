@@ -12,12 +12,15 @@ from activity_bookings.api_client import (
     ApiClient,
     AuthResult,
     Booking,
+    BookingActivity,
+    BookingSummary,
     NewActivity,
     User,
     parse_activity,
     parse_activity_detail,
     parse_auth_result,
     parse_booking,
+    parse_booking_summary,
 )
 from activity_bookings.errors import (
     ApiConnectionError,
@@ -813,3 +816,127 @@ def test_create_booking_incomplete_response(respx_mock: respx.MockRouter) -> Non
     respx_mock.post(BOOKINGS_URL).respond(201, json={"activityId": "activity-2"})
     with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiResponseError):
         client.create_booking("activity-2", 1)
+
+
+# --- my bookings ---------------------------------------------------------------------
+
+BOOKING_ACTIVITY_JSON: dict[str, object] = {
+    "name": "City Bike Tour",
+    "slug": "city-bike-tour",
+    "price": 35,
+    "date": "2100-12-20",
+    "duration": 180,
+    "location": "City Center",
+    "status": "published",
+}
+SUMMARY_JSON: dict[str, object] = {**BOOKING_JSON, "activity": BOOKING_ACTIVITY_JSON}
+SUMMARY = BookingSummary(
+    booking=BOOKING,
+    activity=BookingActivity(
+        name="City Bike Tour", date="2100-12-20", price=35.0, status="published"
+    ),
+)
+
+
+def test_parse_booking_summary() -> None:
+    assert parse_booking_summary(SUMMARY_JSON) == SUMMARY
+
+
+def test_parse_booking_summary_without_payment_status() -> None:
+    data = {key: value for key, value in SUMMARY_JSON.items() if key != "paymentStatus"}
+    assert parse_booking_summary(data).booking.payment_status == "pending"
+
+
+@pytest.mark.parametrize(
+    ("data", "field"),
+    [
+        ({key: value for key, value in SUMMARY_JSON.items() if key != "activity"}, "activity"),
+        ({**SUMMARY_JSON, "activity": "activity-2"}, "activity"),
+        ({**SUMMARY_JSON, "activity": {**BOOKING_ACTIVITY_JSON, "price": True}}, "activity.price"),
+        (
+            {
+                **SUMMARY_JSON,
+                "activity": {k: v for k, v in BOOKING_ACTIVITY_JSON.items() if k != "name"},
+            },
+            "activity.name",
+        ),
+    ],
+)
+def test_parse_booking_summary_invalid_activity(data: dict[str, object], field: str) -> None:
+    with pytest.raises(ApiResponseError) as exc:
+        parse_booking_summary(data, 1)
+    assert str(exc.value) == (
+        f"invalid response from the API: booking booking-1 has no valid '{field}'"
+    )
+
+
+def test_parse_booking_summary_without_id_uses_position() -> None:
+    data = {key: value for key, value in SUMMARY_JSON.items() if key != "id"}
+    with pytest.raises(ApiResponseError, match="booking at position 3 has no valid 'id'"):
+        parse_booking_summary(data, 3)
+
+
+def test_parse_booking_summary_not_an_object() -> None:
+    with pytest.raises(ApiResponseError, match="booking at position 2 is not an object"):
+        parse_booking_summary("booking-1", 2)
+
+
+def test_list_bookings(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(BOOKINGS_URL).respond(200, json=[SUMMARY_JSON])
+    with ApiClient(BASE_URL, token="tok-123") as client:
+        assert client.list_bookings() == [SUMMARY]
+    request = route.calls.last.request
+    assert request.headers["Authorization"] == "Bearer tok-123"
+    assert "activityId" not in request.url.params
+
+
+def test_list_bookings_for_activity(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(BOOKINGS_URL).respond(200, json=[SUMMARY_JSON])
+    with ApiClient(BASE_URL, token="t") as client:
+        client.list_bookings("activity-2")
+    assert route.calls.last.request.url.params["activityId"] == "activity-2"
+
+
+def test_list_bookings_empty(respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(BOOKINGS_URL).respond(200, json=[])
+    with ApiClient(BASE_URL, token="t") as client:
+        assert client.list_bookings() == []
+
+
+def test_list_bookings_not_a_list(respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(BOOKINGS_URL).respond(200, json={"id": "booking-1"})
+    with (
+        ApiClient(BASE_URL, token="t") as client,
+        pytest.raises(ApiResponseError, match="expected a list of bookings"),
+    ):
+        client.list_bookings()
+
+
+def test_list_bookings_invalid_item(respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(BOOKINGS_URL).respond(200, json=[SUMMARY_JSON, {"id": "booking-2"}])
+    with (
+        ApiClient(BASE_URL, token="t") as client,
+        pytest.raises(ApiResponseError, match="booking booking-2 has no valid"),
+    ):
+        client.list_bookings()
+
+
+@pytest.mark.parametrize(
+    ("status", "message", "expected"),
+    [
+        (
+            401,
+            "Invalid or expired token. Please login again.",
+            "Invalid or expired token. Please login again.",
+        ),
+        (500, "Failed to retrieve bookings", "API error 500: Failed to retrieve bookings"),
+    ],
+)
+def test_list_bookings_errors(
+    respx_mock: respx.MockRouter, status: int, message: str, expected: str
+) -> None:
+    respx_mock.get(BOOKINGS_URL).respond(status, json={"message": message, "errors": []})
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.list_bookings()
+    assert exc.value.status_code == status
+    assert str(exc.value) == expected

@@ -207,6 +207,27 @@ uv run activity-bookings bookings create activity-2 -p 2 --yes   # sin confirmac
 - El pago rechazado (402, `Payment could not be processed`) solo ocurre cuando el importe es
   múltiplo de 1000; con los datos de ejemplo, en la práctica no se puede provocar.
 
+### Mis reservas
+
+```bash
+uv run activity-bookings bookings list                         # todas mis reservas
+uv run activity-bookings bookings list --activity activity-2   # solo las de una actividad
+```
+
+- `--activity ACTIVITY_ID`: la API devuelve solo las reservas de esa actividad (no puede estar
+  vacío). Sin la opción, se listan todas.
+- Necesita sesión, con las mismas comprobaciones que `bookings create`.
+- Muestra la tabla `My bookings` en el orden que da la API, con ID, Activity (nombre e ID), Date,
+  Seats, Total, Payment y Activity status, seguida del recuento (`N bookings` / `1 booking`). Sin
+  reservas: `No bookings found.` con código 0.
+- El **total** lo calcula la CLI con el precio **actual** de la actividad × plazas: la API no
+  guarda el importe cobrado, así que si el precio cambió después de reservar no coincidirá.
+- La API no tiene un estado propio de la reserva: se muestra el estado del pago (`Payment`; si falta,
+  `pending`) y el de la actividad (`Activity status`) por separado.
+- Si alguna reserva apunta a una actividad borrada, la API responde 500
+  (`Failed to retrieve bookings`) para **todo** el listado; la CLI muestra el error con esa causa
+  probable y termina con código 1. Los demás errores también salen como `Error: ...` con código 1.
+
 ### Configuración
 
 La URL de la API se lee de `$XDG_CONFIG_HOME/activity-bookings/config.toml`

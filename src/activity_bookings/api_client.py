@@ -173,16 +173,17 @@ class Booking:
     payment_status: str
 
 
-def parse_booking(data: object) -> Booking:
+def parse_booking(data: object, label: str = "booking") -> Booking:
     """Build a Booking from an API JSON object, raising ApiResponseError if it is malformed.
 
     A missing `paymentStatus` means `pending`, as the API does in `GET /bookings`.
+    `label` names the booking in error messages.
     """
     if not isinstance(data, dict):
-        raise ApiResponseError("invalid response from the API: booking is not an object")
+        raise ApiResponseError(f"invalid response from the API: {label} is not an object")
 
     def invalid(field: str) -> ApiResponseError:
-        return ApiResponseError(f"invalid response from the API: booking has no valid '{field}'")
+        return ApiResponseError(f"invalid response from the API: {label} has no valid '{field}'")
 
     texts: dict[str, str] = {}
     for key in ("id", "activityId", "userId", "createdAt"):
@@ -209,6 +210,58 @@ def parse_booking(data: object) -> Booking:
         created_at=texts["createdAt"],
         payment_status=payment_status,
     )
+
+
+@dataclass(frozen=True)
+class BookingActivity:
+    """The activity embedded in a `GET /bookings` item. Only the fields the CLI shows."""
+
+    name: str
+    date: str
+    price: float
+    status: str
+
+
+@dataclass(frozen=True)
+class BookingSummary:
+    """A booking as listed by `GET /bookings`: the booking and its activity."""
+
+    booking: Booking
+    activity: BookingActivity
+
+
+def parse_booking_summary(data: object, position: int | None = None) -> BookingSummary:
+    """Build a BookingSummary from a `GET /bookings` item, raising ApiResponseError if malformed.
+
+    The error names the booking by its id or, if that is not valid, by `position`.
+    """
+    label = "booking" if position is None else f"booking at position {position}"
+    if not isinstance(data, dict):
+        raise ApiResponseError(f"invalid response from the API: {label} is not an object")
+    raw_id = data.get("id")
+    if isinstance(raw_id, str) and raw_id:
+        label = f"booking {raw_id}"
+    booking = parse_booking(data, label)
+
+    def invalid(field: str) -> ApiResponseError:
+        return ApiResponseError(f"invalid response from the API: {label} has no valid '{field}'")
+
+    raw = data.get("activity")
+    if not isinstance(raw, dict):
+        raise invalid("activity")
+    price = raw.get("price")
+    if isinstance(price, bool) or not isinstance(price, int | float):
+        raise invalid("activity.price")
+    texts: dict[str, str] = {}
+    for key in ("name", "date", "status"):
+        value = raw.get(key)
+        if not isinstance(value, str) or not value:
+            raise invalid(f"activity.{key}")
+        texts[key] = value
+    activity = BookingActivity(
+        name=texts["name"], date=texts["date"], price=float(price), status=texts["status"]
+    )
+    return BookingSummary(booking=booking, activity=activity)
 
 
 _JSON_KEYS = {"min_participants": "minParticipants", "max_participants": "maxParticipants"}
@@ -348,6 +401,19 @@ class ApiClient:
         """Book seats with `POST /bookings` (requires a token); the API charges at once."""
         body = {"activityId": activity_id, "participants": participants}
         return parse_booking(self._request("POST", "/bookings", json=body))
+
+    def list_bookings(self, activity_id: str | None = None) -> list[BookingSummary]:
+        """List the token's bookings with `GET /bookings`, optionally for one activity.
+
+        `activityId` is sent only with `activity_id`.
+        """
+        params = {} if activity_id is None else {"activityId": activity_id}
+        data = self._request("GET", "/bookings", params=params)
+        if not isinstance(data, list):
+            raise ApiResponseError("invalid response from the API: expected a list of bookings")
+        return [
+            parse_booking_summary(item, position) for position, item in enumerate(data, start=1)
+        ]
 
     def _request(
         self,
