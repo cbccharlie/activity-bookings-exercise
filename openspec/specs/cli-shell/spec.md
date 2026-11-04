@@ -21,12 +21,25 @@ El sistema SHALL exponer un comando de consola llamado `activity-bookings` dispo
 - **THEN** el proceso termina con código de salida 0 y muestra la misma ayuda que `activity-bookings --help`
 
 ### Requirement: Ayuda al invocar sin argumentos
-El sistema SHALL mostrar la ayuda cuando el comando se invoca sin subcomando, sin ejecutar ninguna acción.
+Cuando el comando se invoca sin subcomando y la entrada o la salida estándar no son un terminal
+interactivo, el sistema SHALL mostrar la ayuda sin ejecutar ninguna acción. Si ambas son un
+terminal interactivo, SHALL abrir el menú interactivo (capacidad `interactive-menu`).
 
 #### Scenario: Invocación sin argumentos
+- **GIVEN** la entrada estándar no es un terminal interactivo
 - **WHEN** el usuario ejecuta `activity-bookings` sin argumentos
 - **THEN** la salida muestra la ayuda con la lista de subcomandos
 - **AND** el proceso no realiza ninguna otra acción
+
+#### Scenario: Invocación sin argumentos en un terminal
+- **GIVEN** la entrada y la salida estándar son un terminal interactivo
+- **WHEN** el usuario ejecuta `activity-bookings` sin argumentos
+- **THEN** se abre el menú interactivo en lugar de la ayuda
+
+#### Scenario: Un subcomando no abre el menú
+- **GIVEN** la entrada y la salida estándar son un terminal interactivo
+- **WHEN** el usuario ejecuta `activity-bookings config`
+- **THEN** se ejecuta el subcomando `config` y no se abre el menú
 
 ### Requirement: Versión del cliente
 El sistema SHALL mostrar la versión del paquete instalado con la opción `--version` y terminar con código 0.
