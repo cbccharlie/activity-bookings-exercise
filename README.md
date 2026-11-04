@@ -65,7 +65,8 @@ uv run activity-bookings --config ./custom.toml       # el menú usa esa configu
   entrada o la salida no son un terminal (un script, una tubería), muestra la ayuda como siempre.
 - Opciones, agrupadas: actividades (listar, ver, crear, modificar, borrar, cambiar estado), reservas
   (reservar, mis reservas, ver reserva), cuenta (registro, login, logout, whoami), configuración y
-  `Exit`. Encima del menú se indica la sesión (`Logged in as Ana` / `Not logged in`).
+  `Exit`. Los títulos de sección (`── Activities ──`...) se muestran en gris y el cursor se los
+  salta. Encima del menú se indica la sesión (`Logged in as Ana` / `Not logged in`).
 - Cada opción pide sus datos y ejecuta el subcomando equivalente, con su misma validación, errores
   y salida. Los datos opcionales se dejan vacíos para omitirlos (en `Update an activity`, vacío
   conserva el valor). Tras cada acción, también si falla, vuelve al menú.

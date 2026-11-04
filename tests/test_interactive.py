@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import questionary
 import respx
 from jwt_helpers import make_jwt
 from typer.testing import CliRunner, Result
@@ -13,7 +14,14 @@ from activity_bookings import cli
 from activity_bookings.api_client import User
 from activity_bookings.cli import app
 from activity_bookings.config import DEFAULT_API_URL
-from activity_bookings.interactive import Choice, MenuItem, Section, menu_items
+from activity_bookings.interactive import (
+    MENU_STYLE,
+    Choice,
+    MenuItem,
+    QuestionaryPrompter,
+    Section,
+    menu_items,
+)
 from activity_bookings.session import Session, default_session_path, save_session
 
 TOKEN = make_jwt(4102444800)  # exp in 2100
@@ -164,6 +172,40 @@ def test_menu_options_in_order(menu: RunMenu) -> None:
         "Exit",
     ]
     assert menu_items()[-1] == Choice("Exit", "exit")
+
+
+def test_section_titles_are_dimmed(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Answered:
+        def ask(self) -> str:
+            return "activities.list"
+
+    def fake_select(message: str, **kwargs: object) -> Answered:
+        calls.append({"message": message, **kwargs})
+        return Answered()
+
+    monkeypatch.setattr(questionary, "select", fake_select)
+    answer = QuestionaryPrompter().select(MENU, menu_items())
+    assert answer == "activities.list"
+    (call,) = calls
+    assert call["style"] is MENU_STYLE
+    assert ("separator", "fg:ansibrightblack") in MENU_STYLE.style_rules
+    choices = call["choices"]
+    assert isinstance(choices, list)
+    separators = [c.line for c in choices if isinstance(c, questionary.Separator)]
+    assert separators == [
+        "── Activities ──",
+        "── Bookings ──",
+        "── Account ──",
+        "── Settings ──",
+    ]
+    assert all(c.disabled for c in choices if isinstance(c, questionary.Separator))
+    options = [c for c in choices if not isinstance(c, questionary.Separator)]
+    assert all(isinstance(c, questionary.Choice) for c in options)
+    labels = [item.label for item in menu_items() if isinstance(item, Choice)]
+    assert [c.title for c in options] == labels
+    assert all(c.disabled is None for c in options)
 
 
 # --- Indicación de la sesión ---------------------------------------------------------

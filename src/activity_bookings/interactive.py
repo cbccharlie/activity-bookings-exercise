@@ -48,6 +48,10 @@ class Prompter(Protocol):
     def confirm(self, message: str) -> bool | None: ...
 
 
+MENU_STYLE = questionary.Style([("separator", "fg:ansibrightblack")])
+"""Section titles in the terminal's grey, so they do not look like options."""
+
+
 class QuestionaryPrompter:
     """Prompter for a real terminal, with arrow-key selection."""
 
@@ -58,7 +62,7 @@ class QuestionaryPrompter:
             else questionary.Choice(item.label, value=item.value)
             for item in items
         ]
-        answer = questionary.select(message, choices=choices).ask()
+        answer = questionary.select(message, choices=choices, style=MENU_STYLE).ask()
         return answer if isinstance(answer, str) else None
 
     def text(self, message: str, default: str = "") -> str | None:
