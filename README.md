@@ -99,9 +99,10 @@ uv run activity-bookings auth logout                 # cerrar la sesión local
   `Error:` y código 1.
 
 > **Fallo conocido del servidor** (punto 1 de «Discrepancias y dudas» en
-> `docs/api-reference.md`): `auth login` probablemente responda `Invalid email or password` tanto
-> con los usuarios de los datos de ejemplo (p. ej. `m@f.c`) como con los recién registrados. Si te
-> ocurre, trabaja con la sesión que deja `auth register`.
+> `docs/api-reference.md`): `auth login` responde `Invalid email or password` con los usuarios de
+> los datos de ejemplo (p. ej. `m@f.c`), aunque la contraseña sea correcta (comprobado con la API en
+> marcha), y probablemente también con los recién registrados. Es un fallo de la API, no de la CLI:
+> trabaja con la sesión que deja `auth register`.
 
 ### Listado de actividades
 
@@ -173,7 +174,7 @@ uv run activity-bookings activities delete activity-5 --yes    # sin confirmaci�
 > **Fallos conocidos del servidor** (puntos 1 y 7 de «Discrepancias y dudas» en
 > `docs/api-reference.md`):
 >
-> - (1a) Como `auth login` probablemente falle con los usuarios de ejemplo, lo normal es trabajar
+> - (1a) Como `auth login` falla con los usuarios de ejemplo, lo normal es trabajar
 >   con la sesión de `auth register`. Ese usuario no es dueño de las actividades de ejemplo, así
 >   que modificarlas o borrarlas dará `You can only update/delete your own activities`.
 > - (1b) El contador de IDs del servidor empieza en 1, así que un `activities create` podría

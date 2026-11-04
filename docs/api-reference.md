@@ -159,7 +159,7 @@ Endpoints públicos y protegidos:
 | 401 | Credenciales incorrectas | `{"message":"Invalid email or password","errors":[]}` (`src/routes/auth.ts:41-48`) |
 | 401 | Otro fallo | `{"message":"Authentication failed","errors":[]}` |
 
-> Hay un posible fallo que puede romper el login con los usuarios de la semilla. Ver Discrepancias, punto 1.
+> Fallo confirmado: el login con los usuarios de la semilla responde 401. Ver Discrepancias, punto 1.
 
 ### Errores comunes a todas las rutas protegidas (middleware)
 
@@ -235,7 +235,7 @@ Endpoints públicos y protegidos:
 ### PUT /activities/:id
 - **Propósito:** modificar una actividad. Necesita token y solo puede hacerlo su dueño (`src/routes/activities.ts:173-226`).
 - **Petición:** los mismos campos que en el alta, todos opcionales. Aquí los números tienen que ser de tipo `number`, no se aceptan cadenas (`src/services/activity.service.ts:354-441`).
-  - Si se envía `status`, da error 400 con el mensaje `"Status cannot be changed via PUT endpoint. Use PATCH /activities/:id/status to transition status."` (`:433-438`).
+  - Si se envía `status` con cualquier valor, incluido `null`, da error 400 `"Validation failed"` con `errors: [{"field": "status", "message": "Status cannot be changed via PUT endpoint. Use PATCH /activities/:id/status to transition status."}]` (`:432-438`, `src/routes/activities.ts:185-191`). En PUT, el 404 se comprueba antes que esta validación.
   - Si cambia `name`, se vuelve a generar el `slug`.
 - **Respuesta 200:** la `Activity` actualizada, con `updatedAt`.
 - **Errores:**
@@ -262,20 +262,25 @@ Endpoints públicos y protegidos:
 
 ### PATCH /activities/:id/status
 - **Propósito:** cambiar el estado de una actividad. Necesita token y solo puede hacerlo su dueño (`src/routes/activities.ts:279-347`).
-- **Petición:** `{ "status": "<ActivityStatus>" }`.
-- **Respuesta 200:** la `Activity` con el nuevo `status` y `updatedAt` (`src/services/activity.service.ts:474-504`).
-- **Errores:**
+- **Petición:** `{ "status": "<ActivityStatus>" }`. Los demás campos del cuerpo se ignoran (`src/routes/activities.ts:291-319`). El ID se busca tal cual.
+- **Respuesta 200:** la `Activity` completa, sin envolver, con el nuevo `status` y siempre con `updatedAt` (`src/services/activity.service.ts:474-504`). En las actividades que nunca se han modificado, `updatedAt` no aparece (`src/types/activity.ts:28`).
+- **Errores**, en el orden en que se evalúan:
 
 | Código | Condición | Mensaje |
 |---|---|---|
+| 401 | Sin token | `"Authentication required. Please provide a valid token."` (`src/middleware/auth.middleware.ts:15-22`) |
+| 401 | Token inválido o caducado | `"Invalid or expired token. Please login again."` (`src/middleware/auth.middleware.ts:32-39`) |
 | 400 | El cuerpo no es un objeto | `"Request body must be a valid JSON object"` |
-| 400 | Falta `status` o no es una cadena | `"Status field is required and must be a string"` |
-| 400 | Estado desconocido | `"Invalid status. Status must be one of: draft, published, confirmed, sold-out, done, cancelled"` |
-| 400 | Transición no permitida | `"Invalid status transition from draft to done. Valid transitions are: published"` |
-| 403 | No es el dueño | `"You can only transition your own activities"` |
+| 400 | Falta `status`, es vacío u otro valor falsy, o no es una cadena | `"Status field is required and must be a string"` |
+| 400 | Estado desconocido (distingue mayúsculas) | `"Invalid status. Status must be one of: draft, published, confirmed, sold-out, done, cancelled"` |
 | 404 | El ID no existe | `"Activity not found"` |
+| 403 | No es el dueño | `"You can only transition your own activities"` |
+| 400 | Transición no permitida | `"Invalid status transition from <actual> to <destino>. Valid transitions are: <lista separada por ", ">"`, p. ej. `"Invalid status transition from draft to done. Valid transitions are: published"` (`src/services/activity.service.ts:484-489`) |
+| 400 | Transición desde un estado final | `"Invalid status transition from done to published. Valid transitions are: none (terminal state)"` (`:487`) |
+| 500 | Otro fallo (p. ej. al guardar) | `"Failed to transition activity status"` (`src/routes/activities.ts:341-345`) |
 
-  En todos los casos `errors` es `[]`.
+  En todos los casos `errors` es `[]`. La validación del cuerpo va **antes** de buscar la actividad (un estado desconocido sobre un ID inexistente da 400, no 404), y la propiedad (403) se comprueba **antes** que la transición (400).
+- Cambiar el estado **no tiene efectos secundarios**: no toca reservas ni pagos. Cancelar una actividad no cancela ni reembolsa sus reservas (`src/services/activity.service.ts:491-503`).
 
 #### Máquina de estados de la actividad
 Origen: `src/services/activity.service.ts:447-458`.
@@ -288,6 +293,8 @@ Origen: `src/services/activity.service.ts:447-458`.
 | `sold-out` | `confirmed` |
 | `done` | — (estado final) |
 | `cancelled` | — (estado final) |
+
+- No se permite pasar al mismo estado (`published → published` da 400) ni volver a `draft` desde ningún estado (`src/services/activity.service.ts:464-467`).
 
 - Ninguna transición es automática. `sold-out` **no** se activa solo al agotarse las plazas, aunque la spec diga que "puede" (`specs/feat-activity-status-lifecycle.spec.md:32`). No hay ningún código que lo haga.
 
@@ -380,11 +387,11 @@ Origen: `src/services/activity.service.ts:447-458`.
 
 ## Discrepancias y dudas
 
-1. **Posible fallo en el orden de inicialización (sacado del código y revisado a mano; sin confirmar con la API en marcha).**
+1. **Fallo en el orden de inicialización (sacado del código; la consecuencia (a) está confirmada con la API en marcha el 2026-11-04, las demás no).**
    - `src/index.ts` importa los routers (`:5-8`) **antes** de llamar a `loadAllData()` (`:11`). Con `module: commonjs` (`tsconfig.json`), los `require` se ejecutan primero.
    - Al cargarse, los routers crean sus servicios con el repositorio compartido (`src/routes/auth.ts:11`, `src/routes/users.ts:11`, `src/routes/activities.ts:11`, `src/routes/bookings.ts:14-16`). En ese momento los repositorios todavía están vacíos.
    - Consecuencias:
-     - (a) El `emailIndex` de `UserService` queda vacío (`src/services/user.service.ts:10-13`, `:50-56`), así que **`POST /login` con `m@f.c` / `1234aB` probablemente responda 401 "Invalid email or password"**.
+     - (a) El `emailIndex` de `UserService` queda vacío (`src/services/user.service.ts:10-13`, `:50-56`), así que **`POST /login` con `m@f.c` / `1234aB` responde 401 "Invalid email or password"** (confirmado el 2026-11-04 con la API en marcha).
      - (b) `nextId` empieza en 1 en todos los servicios. Un `POST /activities` o `POST /users` podría sobrescribir registros existentes (`activity-1`, `user-1`).
      - (c) `auth.ts` y `users.ts` usan **instancias distintas** de `UserService`, cada una con su propio `emailIndex`. Por eso un usuario recién registrado tampoco podría hacer login.
    - Alternativa para el cliente: `POST /users` ya devuelve `accessToken`, así que se puede trabajar con el token del registro.
