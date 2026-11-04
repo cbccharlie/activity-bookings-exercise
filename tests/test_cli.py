@@ -1,10 +1,11 @@
 import subprocess
 import sys
 
+import pytest
 import typer
 from typer.testing import CliRunner
 
-from activity_bookings import __version__
+from activity_bookings import __version__, cli, interactive
 from activity_bookings.cli import app
 from activity_bookings.errors import ActivityBookingsError, handle_errors
 
@@ -31,9 +32,38 @@ def test_module_execution_shows_same_help(runner: CliRunner) -> None:
 
 def test_no_arguments_shows_help(runner: CliRunner) -> None:
     result = runner.invoke(app, [])
+    assert result.exit_code == 2
     assert "Usage:" in result.output
     assert "config" in result.output
     assert "API URL" not in result.output
+
+
+def fake_terminal(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Pretend to run in a terminal and record whether the menu would open."""
+    opened: list[object] = []
+    monkeypatch.setattr(cli, "_is_interactive", lambda: True)
+    monkeypatch.setattr(interactive, "run_menu", lambda *args: opened.append(args))
+    return opened
+
+
+def test_no_arguments_in_terminal_opens_menu(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened = fake_terminal(monkeypatch)
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0
+    assert len(opened) == 1
+    assert "Usage:" not in result.output
+
+
+def test_subcommand_in_terminal_does_not_open_menu(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened = fake_terminal(monkeypatch)
+    result = runner.invoke(app, ["config"])
+    assert result.exit_code == 0
+    assert "API URL" in result.output
+    assert opened == []
 
 
 def test_version(runner: CliRunner) -> None:

@@ -54,6 +54,25 @@ uv run activity-bookings config      # configuración efectiva (URL de la API y 
 uv run activity-bookings --config ./custom.toml config   # usar otro fichero de configuración
 ```
 
+### Modo interactivo
+
+```bash
+uv run activity-bookings                              # abre el menú
+uv run activity-bookings --config ./custom.toml       # el menú usa esa configuración
+```
+
+- Sin subcomando y en un terminal, se abre un menú que se recorre con las flechas y Enter. Si la
+  entrada o la salida no son un terminal (un script, una tubería), muestra la ayuda como siempre.
+- Opciones, agrupadas: actividades (listar, ver, crear, modificar, borrar, cambiar estado), reservas
+  (reservar, mis reservas, ver reserva), cuenta (registro, login, logout, whoami), configuración y
+  `Exit`. Encima del menú se indica la sesión (`Logged in as Ana` / `Not logged in`).
+- Cada opción pide sus datos y ejecuta el subcomando equivalente, con su misma validación, errores
+  y salida. Los datos opcionales se dejan vacíos para omitirlos (en `Update an activity`, vacío
+  conserva el valor). Tras cada acción, también si falla, vuelve al menú.
+- Borrar y pasar a `cancelled`/`done` piden confirmación en el menú. Reservar pide la confirmación
+  con el total del propio `bookings create`, y las contraseñas se piden igual que fuera del menú.
+- Esc o Ctrl+C en un dato abandonan esa acción; en el menú, o eligiendo `Exit`, salen (código 0).
+
 ### Registro de usuarios
 
 ```bash

@@ -17,6 +17,7 @@ bookings and managing your own activities. There is no local database.
 
 - Python 3.12+, managed with uv and `pyproject.toml` (`src/` layout, `uv_build` backend).
 - Typer for the CLI, Rich for console output, httpx for HTTP (JWT auth on protected routes).
+- questionary for the interactive menu (arrow-key selection); only used in `interactive.py`.
 - `tomllib` (stdlib) for the user config file (`~/.config/activity-bookings/config.toml`).
 - pytest + respx for tests, ruff for lint and format, mypy in strict mode.
 
@@ -43,7 +44,9 @@ uv run ruff check && uv run ruff format --check && uv run mypy src tests && uv r
 src/activity_bookings/
   __init__.py      # __version__ via importlib.metadata
   __main__.py      # python -m activity_bookings
-  cli.py           # root Typer app: global options (--version, --config), subcommand registry, main()
+  cli.py           # root Typer app: global options (--version, --config), subcommand registry,
+                   # main(); no command: interactive menu in a terminal, help otherwise
+  interactive.py   # interactive menu: Prompter (questionary), run_menu(); builds subcommand args
   config.py        # Settings, load_settings(), config_dir(), default_config_path()
   errors.py        # ActivityBookingsError (base), ConfigError, ApiError, ApiConnectionError,
                    # ApiResponseError, SessionError, handle_errors
@@ -57,11 +60,12 @@ src/activity_bookings/
     _auth.py       # protected-route helpers: authorized_client(), login_hint() (401 → login hint)
     config_cmd.py  # `config`
     auth_cmd.py    # `auth` group: `register`, `login`, `logout`, `whoami`
-    activities_cmd.py  # `activities` group: `list`, `show`, `create`, `update`, `delete`
-    bookings_cmd.py    # `bookings` group: `create`
+    activities_cmd.py  # `activities` group: `list`, `show`, `create`, `update`, `delete`, `status`
+    bookings_cmd.py    # `bookings` group: `create`, `list`, `show`
 tests/
   conftest.py      # CliRunner fixture, isolated HOME / XDG_CONFIG_HOME
   test_cli.py
+  test_interactive.py  # menu driven by a FakePrompter with scripted answers
   test_config.py
   test_api_client.py
   test_session.py
