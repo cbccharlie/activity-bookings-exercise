@@ -475,6 +475,7 @@ def test_group_help_lists_all_subcommands(runner: CliRunner) -> None:
     assert result.exit_code == 0
     for command in ("list", "create", "update", "delete"):
         assert command in result.stdout
+    assert re.search(r"^\W*status\s+Change the status", result.stdout, re.MULTILINE)
 
 
 # --- create --------------------------------------------------------------------------
@@ -994,3 +995,262 @@ def test_show_activity_without_duration(runner: CliRunner, respx_mock: respx.Moc
     assert_clean_failure(result)
     assert result.stderr.startswith("Error: invalid response from the API")
     assert "duration" in result.stderr
+
+
+# --- status --------------------------------------------------------------------------
+
+ACTIVITY_5_STATUS_URL = f"{ACTIVITY_5_URL}/status"
+
+
+def change_status(runner: CliRunner, *args: str, input: str | None = None) -> Result:
+    return runner.invoke(app, ["activities", "status", *args], input=input)
+
+
+def mock_status(
+    respx_mock: respx.MockRouter, status: str = "published", url: str = ACTIVITY_5_STATUS_URL
+) -> respx.Route:
+    body = activity(id="activity-5", name="Yoga", status=status)
+    return respx_mock.patch(url).respond(200, json=body)
+
+
+# Cambio de estado de una actividad
+
+
+def test_status_publish(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    login_as(token="tok-123")
+    route = mock_status(respx_mock)
+    result = change_status(runner, "activity-5", "published")
+    assert result.exit_code == 0, result.output
+    assert route.call_count == 1
+    request = route.calls.last.request
+    assert request.headers["Authorization"] == "Bearer tok-123"
+    assert sent_json(route) == {"status": "published"}
+    assert "[y/N]" not in result.stdout
+    assert "Activity activity-5 is now published." in result.stdout
+    assert "Yoga" in result.stdout
+    assert_no_token(result, "tok-123")
+
+
+def test_status_sent_to_configured_api(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    write_config(CUSTOM_API_URL)
+    login_as(api_url=CUSTOM_API_URL)
+    route = mock_status(respx_mock, url=f"{CUSTOM_API_URL}/activities/activity-5/status")
+    result = change_status(runner, "activity-5", "published")
+    assert result.exit_code == 0, result.output
+    assert route.call_count == 1
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_encodes_id(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.patch(f"{ACTIVITIES_URL}/a%2Fb/status").respond(
+        404, json={"message": "Activity not found", "errors": []}
+    )
+    result = change_status(runner, "a/b", "published")
+    assert_clean_failure(result)
+    assert route.calls.last.request.url.raw_path == b"/activities/a%2Fb/status"
+
+
+# Argumentos del cambio de estado
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_unknown_status(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = change_status(runner, "activity-5", "open")
+    assert_usage_error(result, respx_mock, "NEW_STATUS", "published")
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_missing_status(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = change_status(runner, "activity-5")
+    assert_usage_error(result, respx_mock, "NEW_STATUS")
+
+
+def test_status_missing_id_and_status(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = change_status(runner)
+    assert_usage_error(result, respx_mock, "ACTIVITY_ID")
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_blank_id(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = change_status(runner, " ", "published")
+    assert_usage_error(result, respx_mock, "ACTIVITY_ID")
+
+
+# Confirmación de los estados finales
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_cancel_confirmed(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    route = mock_status(respx_mock, "cancelled")
+    result = change_status(runner, "activity-5", "cancelled", input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "Change activity activity-5 to cancelled?" in result.stdout
+    assert "[y/N]" in result.stdout
+    assert sent_json(route) == {"status": "cancelled"}
+    assert "Activity activity-5 is now cancelled." in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("new_status", "answer"), [("cancelled", "n\n"), ("done", "\n")], ids=["no", "empty"]
+)
+@pytest.mark.usefixtures("session_path")
+def test_status_final_not_confirmed(
+    runner: CliRunner, respx_mock: respx.MockRouter, new_status: str, answer: str
+) -> None:
+    result = change_status(runner, "activity-5", new_status, input=answer)
+    assert result.exit_code == 0
+    assert "Status change cancelled." in result.stdout
+    assert respx_mock.calls.call_count == 0
+
+
+@pytest.mark.parametrize("flag", ["--yes", "-y"])
+@pytest.mark.usefixtures("session_path")
+def test_status_final_with_yes(runner: CliRunner, respx_mock: respx.MockRouter, flag: str) -> None:
+    mock_status(respx_mock, "done")
+    result = change_status(runner, "activity-5", "done", flag)
+    assert result.exit_code == 0, result.output
+    assert "[y/N]" not in result.stdout
+    assert "Activity activity-5 is now done." in result.stdout
+
+
+def test_status_final_without_session_does_not_prompt(
+    runner: CliRunner, respx_mock: respx.MockRouter
+) -> None:
+    result = change_status(runner, "activity-5", "cancelled")
+    assert_clean_failure(result)
+    assert "[y/N]" not in result.stdout
+    assert "Error: not logged in" in result.stderr
+    assert "activity-bookings auth login" in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+# Cambio de estado con sesión
+
+
+def test_status_without_session(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    assert "Error: not logged in" in result.stderr
+    assert "activity-bookings auth login" in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+def test_status_expired_session(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    login_as(token=EXPIRED_TOKEN)
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    assert "expired" in result.stderr
+    assert "activity-bookings auth login" in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+def test_status_session_of_other_api(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    login_as(api_url="http://localhost:3000")
+    write_config(CUSTOM_API_URL)
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    for fragment in ("http://localhost:3000", CUSTOM_API_URL, "activity-bookings auth login"):
+        assert fragment in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+def test_status_token_rejected_by_server(
+    runner: CliRunner, respx_mock: respx.MockRouter, session_path: Path
+) -> None:
+    respx_mock.patch(ACTIVITY_5_STATUS_URL).respond(
+        401, json={"message": "Invalid or expired token. Please login again.", "errors": []}
+    )
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    assert "Error: Invalid or expired token. Please login again." in result.stderr
+    assert "activity-bookings auth login" in result.stderr
+    assert session_path.exists()
+
+
+# Errores del cambio de estado
+
+
+@pytest.mark.parametrize(
+    ("args", "status", "message", "expected"),
+    [
+        (
+            ("activity-5", "done", "--yes"),
+            400,
+            "Invalid status transition from draft to done. Valid transitions are: published",
+            "Error: Invalid status transition from draft to done. Valid transitions are: published",
+        ),
+        (
+            ("activity-5", "published"),
+            400,
+            "Invalid status transition from done to published. "
+            "Valid transitions are: none (terminal state)",
+            "none (terminal state)",
+        ),
+        (
+            ("activity-2", "published"),
+            403,
+            "You can only transition your own activities",
+            "Error: You can only transition your own activities",
+        ),
+        (
+            ("activity-99", "published"),
+            404,
+            "Activity not found",
+            "Error: Activity not found",
+        ),
+        (
+            ("activity-5", "published"),
+            500,
+            "Failed to transition activity status",
+            "Error: API error 500: Failed to transition activity status",
+        ),
+    ],
+    ids=["invalid-transition", "from-final-state", "other-user", "not-found", "server-error"],
+)
+@pytest.mark.usefixtures("session_path")
+def test_status_api_errors(
+    runner: CliRunner,
+    respx_mock: respx.MockRouter,
+    args: tuple[str, ...],
+    status: int,
+    message: str,
+    expected: str,
+) -> None:
+    respx_mock.patch(f"{ACTIVITIES_URL}/{args[0]}/status").respond(
+        status, json={"message": message, "errors": []}
+    )
+    result = change_status(runner, *args)
+    assert_clean_failure(result)
+    assert expected in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_incomplete_response(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.patch(ACTIVITY_5_STATUS_URL).respond(200, json={"message": "ok"})
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    assert result.stderr.startswith("Error: invalid response from the API")
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_wrong_server(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.patch(ACTIVITY_5_STATUS_URL).respond(404, html="<html>Not Found</html>")
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    assert "404" in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_api_down(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.patch(ACTIVITY_5_STATUS_URL).mock(side_effect=httpx.ConnectError("refused"))
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    assert "Error: cannot connect to the API at http://localhost:3000" in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+def test_status_timeout(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.patch(ACTIVITY_5_STATUS_URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    result = change_status(runner, "activity-5", "published")
+    assert_clean_failure(result)
+    assert "did not respond in time" in result.stderr

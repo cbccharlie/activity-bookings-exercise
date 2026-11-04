@@ -47,7 +47,7 @@ class SortOrder(StrEnum):
 
 
 class ActivityStatus(StrEnum):
-    """Activity states, used to filter the listing on the client."""
+    """Activity states: filter for the listing and target of `activities status`."""
 
     DRAFT = "draft"
     PUBLISHED = "published"
@@ -55,6 +55,9 @@ class ActivityStatus(StrEnum):
     SOLD_OUT = "sold-out"
     DONE = "done"
     CANCELLED = "cancelled"
+
+
+FINAL_STATUSES = frozenset({ActivityStatus.DONE, ActivityStatus.CANCELLED})
 
 
 @app.command("list")
@@ -244,6 +247,48 @@ def delete_activity(
         with login_hint():
             client.delete_activity(activity_id)
     console.print(f"Activity {activity_id} deleted.", markup=False, highlight=False)
+
+
+@app.command("status")
+@handle_errors
+def change_status(
+    ctx: typer.Context,
+    activity_id: Annotated[
+        str, typer.Argument(metavar="ACTIVITY_ID", help="ID of the activity, e.g. activity-5.")
+    ],
+    new_status: Annotated[
+        ActivityStatus, typer.Argument(metavar="NEW_STATUS", help="Status to move the activity to.")
+    ],
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes", "-y", help="Move to done or cancelled without asking for confirmation."
+        ),
+    ] = False,
+) -> None:
+    """Change the status of one of your activities. Requires a session.
+
+    The API decides the valid transitions. Moving to done or cancelled is final: it asks first.
+    """
+    activity_id = activity_id.strip()
+    if not activity_id:
+        raise typer.BadParameter("ACTIVITY_ID cannot be empty", param_hint="ACTIVITY_ID")
+    config_path: Path | None = ctx.obj
+    settings = load_settings(config_path)
+    with authorized_client(settings) as client:
+        if (
+            new_status in FINAL_STATUSES
+            and not yes
+            and not typer.confirm(
+                f"Change activity {activity_id} to {new_status.value}? This cannot be undone.",
+                default=False,
+            )
+        ):
+            console.print("Status change cancelled.", markup=False, highlight=False)
+            return
+        with login_hint():
+            changed = client.change_activity_status(activity_id, new_status.value)
+    _print_activity(changed, f"is now {changed.status}")
 
 
 def _print_activity(activity: Activity, done: str) -> None:

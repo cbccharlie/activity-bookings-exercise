@@ -1041,3 +1041,64 @@ def test_get_booking_errors(
         client.get_booking("booking-1")
     assert exc.value.status_code == status
     assert str(exc.value) == expected
+
+
+# --- change_activity_status ----------------------------------------------------------
+
+
+def test_change_activity_status(respx_mock: respx.MockRouter) -> None:
+    published = {**YOGA_JSON, "status": "published"}
+    route = respx_mock.patch(f"{ACTIVITIES_URL}/activity-5/status").respond(200, json=published)
+    with ApiClient(BASE_URL, token="tok-123") as client:
+        activity = client.change_activity_status("activity-5", "published")
+    assert activity == dataclasses.replace(YOGA, status="published")
+    request = route.calls.last.request
+    assert request.method == "PATCH"
+    assert request.headers["Authorization"] == "Bearer tok-123"
+    assert json.loads(request.content) == {"status": "published"}
+
+
+def test_change_activity_status_encodes_id(respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.patch(f"{ACTIVITIES_URL}/a%2Fb/status").respond(200, json=YOGA_JSON)
+    with ApiClient(BASE_URL, token="t") as client:
+        client.change_activity_status("a/b", "published")
+    assert route.calls.last.request.url.raw_path == b"/activities/a%2Fb/status"
+
+
+def test_change_activity_status_incomplete_response(respx_mock: respx.MockRouter) -> None:
+    respx_mock.patch(f"{ACTIVITIES_URL}/activity-5/status").respond(200, json={"message": "ok"})
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiResponseError):
+        client.change_activity_status("activity-5", "published")
+
+
+@pytest.mark.parametrize(
+    ("status", "message", "expected"),
+    [
+        (
+            400,
+            "Invalid status transition from draft to done. Valid transitions are: published",
+            "Invalid status transition from draft to done. Valid transitions are: published",
+        ),
+        (
+            403,
+            "You can only transition your own activities",
+            "You can only transition your own activities",
+        ),
+        (404, "Activity not found", "Activity not found"),
+        (
+            500,
+            "Failed to transition activity status",
+            "API error 500: Failed to transition activity status",
+        ),
+    ],
+)
+def test_change_activity_status_errors(
+    respx_mock: respx.MockRouter, status: int, message: str, expected: str
+) -> None:
+    respx_mock.patch(f"{ACTIVITIES_URL}/activity-5/status").respond(
+        status, json={"message": message, "errors": []}
+    )
+    with ApiClient(BASE_URL, token="t") as client, pytest.raises(ApiError) as exc:
+        client.change_activity_status("activity-5", "done")
+    assert exc.value.status_code == status
+    assert str(exc.value) == expected

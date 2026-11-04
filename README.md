@@ -157,7 +157,7 @@ uv run activity-bookings activities delete activity-5 --yes    # sin confirmaci�
   la actividad creada.
 - `update ACTIVITY_ID`: acepta las mismas opciones, todas opcionales, y envía solo las indicadas.
   Hay que indicar al menos una. Muestra la actividad actualizada. El estado no se puede cambiar
-  con este comando.
+  con este comando: para eso está `activities status`.
 - `delete ACTIVITY_ID`: pide confirmación (por defecto «no»); `--yes` / `-y` se la salta. Si no
   se confirma, muestra `Deletion cancelled.` y termina con código 0.
 - `--date` acepta `YYYY-MM-DD` o ISO 8601 con hora; si lleva hora, indica también la zona
@@ -165,22 +165,54 @@ uv run activity-bookings activities delete activity-5 --yes    # sin confirmaci�
   API exige que sea futura.
 - Las reglas (fecha futura, precio positivo, mínimo ≤ máximo, ser el dueño de la actividad) las
   comprueba el servidor; la CLI muestra su mensaje y los campos con error, y termina con código 1.
-- Los tres comandos necesitan sesión (`auth register` o `auth login`) y envían su token. Fallan
-  sin llamar a la API, sugiriendo `auth login`, si no hay sesión, si el fichero de sesión no es
-  válido, si la sesión es de otra URL de API distinta de la configurada o si el token ya ha
-  caducado. Si el servidor rechaza el token (401), se muestra su mensaje y la misma sugerencia; el
-  fichero de sesión no se borra.
+- Los cuatro comandos (`create`, `update`, `delete` y `status`) necesitan sesión
+  (`auth register` o `auth login`) y envían su token. Fallan sin llamar a la API, sugiriendo
+  `auth login`, si no hay sesión, si el fichero de sesión no es válido, si la sesión es de otra
+  URL de API distinta de la configurada o si el token ya ha caducado. Si el servidor rechaza el
+  token (401), se muestra su mensaje y la misma sugerencia; el fichero de sesión no se borra.
 
 > **Fallos conocidos del servidor** (puntos 1 y 7 de «Discrepancias y dudas» en
 > `docs/api-reference.md`):
 >
 > - (1a) Como `auth login` falla con los usuarios de ejemplo, lo normal es trabajar
 >   con la sesión de `auth register`. Ese usuario no es dueño de las actividades de ejemplo, así
->   que modificarlas o borrarlas dará `You can only update/delete your own activities`.
+>   que modificarlas, borrarlas o cambiarles el estado dará `You can only update/delete/transition
+>   your own activities`: solo se pueden gestionar las actividades creadas con esa sesión.
 > - (1b) El contador de IDs del servidor empieza en 1, así que un `activities create` podría
 >   sobrescribir `activity-1` u otra actividad existente.
 > - (7) El servidor no impide borrar una actividad con reservas. Después, `GET /bookings` y
 >   `GET /bookings/:id` de esas reservas probablemente respondan con un error 500.
+
+### Cambiar el estado de una actividad
+
+```bash
+uv run activity-bookings activities status activity-5 published         # publicar (se puede reservar)
+uv run activity-bookings activities status activity-5 cancelled         # pide confirmación [y/N]
+uv run activity-bookings activities status activity-5 done --yes        # sin confirmación (también -y)
+```
+
+- `ACTIVITY_ID` (no puede estar en blanco) y `NEW_STATUS`, uno de `draft`, `published`,
+  `confirmed`, `sold-out`, `done` o `cancelled`, en minúsculas. Otro valor es error de uso
+  (código 2) y no llama a la API.
+- Muestra `Activity <id> is now <status>.` y la actividad devuelta, como `create` y `update`.
+- Pasar a `cancelled` o `done` es definitivo y pide confirmación (por defecto «no»); `--yes` / `-y`
+  se la salta. Si no se confirma, muestra `Status change cancelled.` y termina con código 0. Los
+  demás estados se envían sin preguntar.
+- Transiciones que admite la API (la CLI no las comprueba: si no es válida, muestra el mensaje de la
+  API, que indica las posibles, y termina con código 1):
+
+  | Desde | Hacia |
+  |---|---|
+  | `draft` | `published` |
+  | `published` | `confirmed`, `cancelled`, `sold-out` |
+  | `confirmed` | `done`, `cancelled` |
+  | `sold-out` | `confirmed` |
+  | `done`, `cancelled` | ninguno (estados finales) |
+
+- Solo el dueño puede cambiar el estado (si no, `Error: You can only transition your own
+  activities`). Una actividad recién creada está en `draft` y hay que publicarla para poder
+  reservarla.
+- Cancelar una actividad **no** cancela ni reembolsa sus reservas: la API solo cambia el estado.
 
 ### Reservar plazas
 

@@ -441,6 +441,11 @@ class ApiClient:
         """Delete an activity with `DELETE /activities/<id>` (requires a token)."""
         self._request("DELETE", _activity_path(activity_id), expect_body=False)
 
+    def change_activity_status(self, activity_id: str, status: str) -> Activity:
+        """Change an activity's status with `PATCH /activities/<id>/status` (requires a token)."""
+        path = f"{_activity_path(activity_id)}/status"
+        return parse_activity(self._request("PATCH", path, json={"status": status}))
+
     def create_booking(self, activity_id: str, participants: int) -> Booking:
         """Book seats with `POST /bookings` (requires a token); the API charges at once."""
         body = {"activityId": activity_id, "participants": participants}
