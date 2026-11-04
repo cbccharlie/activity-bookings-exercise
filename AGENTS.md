@@ -109,6 +109,7 @@ changes in `openspec/changes/`.
    `/opsx:update` to revise them).
 3. `/opsx:apply` to implement. Mark a task `[x]` only when its tests pass.
 4. Use the `spec-reviewer` subagent to review the change against its specs and this file.
+   Optionally, run `/smoke-test` to exercise the CLI against the real API.
 5. `/opsx:archive` once the full check passes.
 
 OpenSpec artifacts (proposal, design, specs, tasks) are written in Spanish; code stays in English.
