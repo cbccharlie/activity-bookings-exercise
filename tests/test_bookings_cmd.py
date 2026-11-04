@@ -649,3 +649,227 @@ def test_list_timeout(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
     respx_mock.get(BOOKINGS_URL).mock(side_effect=httpx.ReadTimeout("slow"))
     result = list_bookings(runner)
     assert_clean_failure(result)
+
+
+# === bookings show ===================================================================
+
+BOOKING_1_URL = f"{BOOKINGS_URL}/booking-1"
+
+
+def detailed_booking(**overrides: object) -> dict[str, object]:
+    """A `GET /bookings/:id` body: `booking-1` with 2 seats in `activity-2`, 120 minutes long."""
+    activity_overrides = overrides.pop("activity", {})
+    assert isinstance(activity_overrides, dict)
+    return listed_booking(
+        createdAt="2100-11-03T10:00:00.000Z",
+        activity={"duration": 120, **activity_overrides},
+        **overrides,
+    )
+
+
+def mock_detail(
+    respx_mock: respx.MockRouter, body: object = None, url: str = BOOKING_1_URL
+) -> respx.Route:
+    return respx_mock.get(url).respond(200, json=detailed_booking() if body is None else body)
+
+
+def show_booking(runner: CliRunner, *args: str) -> Result:
+    return runner.invoke(app, ["bookings", "show", *args])
+
+
+# --- Subcomando de detalle de reserva ------------------------------------------------
+
+
+def test_bookings_help_lists_create_list_and_show(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["bookings", "--help"])
+    assert result.exit_code == 0
+    assert re.search(r"^\W*create\s+Book seats", result.stdout, re.MULTILINE)
+    assert re.search(r"^\W*list\s+List your bookings", result.stdout, re.MULTILINE)
+    assert re.search(r"^\W*show\s+Show one of your bookings", result.stdout, re.MULTILINE)
+
+
+def test_show_sent_to_configured_api(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    write_config(CUSTOM_API_URL)
+    login_as(api_url=CUSTOM_API_URL)
+    route = mock_detail(respx_mock, url=f"{CUSTOM_API_URL}/bookings/booking-1")
+    result = show_booking(runner, "booking-1")
+    assert result.exit_code == 0, result.output
+    assert route.call_count == 1
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_encodes_id(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    route = respx_mock.get(f"{BOOKINGS_URL}/a%2Fb").respond(
+        404, json={"message": "Booking not found", "errors": []}
+    )
+    result = show_booking(runner, "a/b")
+    assert_clean_failure(result)
+    assert route.calls.last.request.url.raw_path == b"/bookings/a%2Fb"
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_blank_id(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = show_booking(runner, " ")
+    assert_usage_error(result, respx_mock, "BOOKING_ID")
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_missing_id(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = show_booking(runner)
+    assert_usage_error(result, respx_mock, "BOOKING_ID")
+
+
+# --- Ficha de la reserva -------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_complete_booking(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    mock_detail(respx_mock)
+    result = show_booking(runner, "booking-1")
+    assert result.exit_code == 0, result.output
+    out = result.stdout
+    for fragment in (
+        "booking-1",
+        "City Bike Tour",
+        "activity-2",
+        "2100-12-20",
+        "120 min",
+        "City Center",
+        "35.00",
+        "70.00",
+        "paid",
+        "payment-1",
+        "published",
+        "2100-11-03 10:00 UTC",
+    ):
+        assert fragment in out
+    for label in ("Seats", "Price", "Total", "Payment ID", "Activity status", "Booked at"):
+        assert label in out
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_without_payment_status(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    body = detailed_booking()
+    del body["paymentStatus"]
+    del body["paymentId"]
+    mock_detail(respx_mock, body)
+    result = show_booking(runner, "booking-1")
+    assert result.exit_code == 0, result.output
+    assert "pending" in result.stdout
+    assert "Payment ID" not in result.stdout
+
+
+# --- Detalle con sesión --------------------------------------------------------------
+
+
+def test_show_authorization_header(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    login_as(token="tok-123")
+    route = mock_detail(respx_mock)
+    result = show_booking(runner, "booking-1")
+    assert result.exit_code == 0, result.output
+    assert route.calls.last.request.headers["Authorization"] == "Bearer tok-123"
+    assert "tok-123" not in result.stdout
+    assert "tok-123" not in result.stderr
+
+
+def test_show_without_session(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    assert "Error: not logged in" in result.stderr
+    assert "activity-bookings auth login" in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+def test_show_expired_session(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    login_as(token=EXPIRED_TOKEN)
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    assert "expired" in result.stderr
+    assert "activity-bookings auth login" in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+def test_show_session_of_other_api(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    login_as(api_url="http://localhost:3000")
+    write_config(CUSTOM_API_URL)
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    for fragment in ("http://localhost:3000", CUSTOM_API_URL, "activity-bookings auth login"):
+        assert fragment in result.stderr
+    assert respx_mock.calls.call_count == 0
+
+
+def test_show_token_rejected_by_server(
+    runner: CliRunner, respx_mock: respx.MockRouter, session_path: Path
+) -> None:
+    respx_mock.get(BOOKING_1_URL).respond(
+        401, json={"message": "Invalid or expired token. Please login again.", "errors": []}
+    )
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    assert "Error: Invalid or expired token. Please login again." in result.stderr
+    assert "activity-bookings auth login" in result.stderr
+    assert session_path.exists()
+
+
+# --- Errores del detalle de reserva --------------------------------------------------
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_booking_not_found(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(f"{BOOKINGS_URL}/booking-99").respond(
+        404, json={"message": "Booking not found", "errors": []}
+    )
+    result = show_booking(runner, "booking-99")
+    assert_clean_failure(result)
+    assert "Error: Booking not found" in result.stderr
+    assert "deleted activity" not in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_deleted_activity_error(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(BOOKING_1_URL).respond(
+        500, json={"message": "Failed to retrieve booking", "errors": []}
+    )
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    assert "Failed to retrieve booking" in result.stderr
+    assert "This booking may refer to a deleted activity." in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+@pytest.mark.parametrize(
+    "body",
+    [[], {"id": "booking-1", "activityId": "activity-2"}],
+    ids=["not-an-object", "incomplete-booking"],
+)
+def test_show_invalid_response(
+    runner: CliRunner, respx_mock: respx.MockRouter, body: object
+) -> None:
+    mock_detail(respx_mock, body)
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    assert "invalid response from the API" in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_wrong_server(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(BOOKING_1_URL).respond(404, html="<html>Not Found</html>")
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    assert "404" in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_api_down(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(BOOKING_1_URL).mock(side_effect=httpx.ConnectError("refused"))
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)
+    assert DEFAULT_API_URL in result.stderr
+
+
+@pytest.mark.usefixtures("session_path")
+def test_show_timeout(runner: CliRunner, respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(BOOKING_1_URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    result = show_booking(runner, "booking-1")
+    assert_clean_failure(result)

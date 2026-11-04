@@ -264,6 +264,50 @@ def parse_booking_summary(data: object, position: int | None = None) -> BookingS
     return BookingSummary(booking=booking, activity=activity)
 
 
+@dataclass(frozen=True)
+class BookingDetail:
+    """A booking as returned by `GET /bookings/:id`: the listed fields plus the detail."""
+
+    summary: BookingSummary
+    payment_id: str | None
+    activity_duration: int
+    activity_location: str
+
+
+def parse_booking_detail(data: object) -> BookingDetail:
+    """Build a BookingDetail from an API JSON object, raising ApiResponseError if malformed.
+
+    A missing or null `paymentId` means the booking has no payment id.
+    """
+    if not isinstance(data, dict):
+        raise ApiResponseError("invalid response from the API: expected a booking")
+    summary = parse_booking_summary(data)
+
+    def invalid(field: str) -> ApiResponseError:
+        return ApiResponseError(
+            f"invalid response from the API: booking {summary.booking.id} has no valid '{field}'"
+        )
+
+    payment_id = data.get("paymentId")
+    if payment_id is not None and not isinstance(payment_id, str):
+        raise invalid("paymentId")
+    activity = data["activity"]  # a dict: parse_booking_summary() checked it
+    location = activity.get("location")
+    if not isinstance(location, str):
+        raise invalid("activity.location")
+    duration = activity.get("duration")
+    if isinstance(duration, float) and duration.is_integer():
+        duration = int(duration)
+    if isinstance(duration, bool) or not isinstance(duration, int):
+        raise invalid("activity.duration")
+    return BookingDetail(
+        summary=summary,
+        payment_id=payment_id,
+        activity_duration=duration,
+        activity_location=location,
+    )
+
+
 _JSON_KEYS = {"min_participants": "minParticipants", "max_participants": "maxParticipants"}
 
 
@@ -414,6 +458,11 @@ class ApiClient:
         return [
             parse_booking_summary(item, position) for position, item in enumerate(data, start=1)
         ]
+
+    def get_booking(self, booking_id: str) -> BookingDetail:
+        """Get one of the token's bookings with `GET /bookings/<id>` (requires a token)."""
+        data = self._request("GET", f"/bookings/{quote(booking_id, safe='')}")
+        return parse_booking_detail(data)
 
     def _request(
         self,

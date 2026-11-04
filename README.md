@@ -228,6 +228,26 @@ uv run activity-bookings bookings list --activity activity-2   # solo las de una
   (`Failed to retrieve bookings`) para **todo** el listado; la CLI muestra el error con esa causa
   probable y termina con código 1. Los demás errores también salen como `Error: ...` con código 1.
 
+### Detalle de una reserva
+
+```bash
+uv run activity-bookings bookings show booking-1
+```
+
+- `BOOKING_ID` (obligatorio, no puede estar en blanco): ID de una reserva propia, p. ej. el que
+  muestra `bookings list`. Un ID vacío es error de uso (código 2) y no llama a la API.
+- Necesita sesión, con las mismas comprobaciones que `bookings create`.
+- Muestra una ficha con ID, Activity (nombre e ID), Date, Duration, Location, Seats, Price (por
+  plaza), Total, Payment, Payment ID (solo si la reserva tiene pago asociado), Activity status y
+  Booked at (fecha de la reserva).
+- Como en el listado, el **total** usa el precio **actual** de la actividad × plazas, no el
+  importe cobrado.
+- `Error: Booking not found` (código 1) tanto si la reserva no existe como si es de otro usuario:
+  la API no distingue ambos casos.
+- Si la actividad de la reserva se ha borrado, la API responde 500 (`Failed to retrieve booking`);
+  la CLI muestra el error con esa causa probable y termina con código 1. Los demás errores también
+  salen como `Error: ...` con código 1.
+
 ### Configuración
 
 La URL de la API se lee de `$XDG_CONFIG_HOME/activity-bookings/config.toml`
